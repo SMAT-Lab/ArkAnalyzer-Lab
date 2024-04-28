@@ -1,0 +1,10 @@
+{
+  "targetProjectName": "target_project",
+  "targetProjectDirectory": "target_project",    
+  
+  "logPath": "out\\log.txt",
+  "ohosSdkPath": "",
+  "kitSdkPath": "",
+  "systemSdkPath": "",
+  "otherSdks": []
+}
