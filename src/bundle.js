@@ -1,8 +1,9 @@
 import * as fs from 'fs';
 import fs__default from 'fs';
-import path from 'path';
+import path, { join, dirname } from 'path';
 import { spawnSync } from 'child_process';
 import { configure, getLogger } from 'log4js';
+import { removeSync } from 'fs-extra';
 import * as ts from 'typescript';
 import ts__default from 'typescript';
 import sourceMap from 'source-map';
@@ -93,7 +94,97 @@ class ConsoleLogger {
     }
 }
 
-const logger$f = ConsoleLogger.getLogger();
+function transfer2UnixPath(path2Do) {
+    return path.posix.join(...path2Do.split(/\\/));
+}
+
+const logger$i = ConsoleLogger.getLogger();
+function fetchDependenciesFromFile(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return {};
+    }
+    const file = parseJsonText(fs.readFileSync(filePath, 'utf-8'));
+    return file;
+}
+function parseJsonText(text) {
+    const file = ts.parseJsonText('', text);
+    const rootObjectLiteralExpression = getRootObjectLiteral(file);
+    if (!rootObjectLiteralExpression) {
+        return {};
+    }
+    return parseObjectLiteralExpression(rootObjectLiteralExpression, file);
+}
+function getRootObjectLiteral(file) {
+    if (!file.statements || !file.statements.length) {
+        logger$i.error('The JSON5 file format is incorrect, the root node statements is empty.');
+        return undefined;
+    }
+    const expressionStatement = file.statements[0];
+    if (expressionStatement.kind !== ts.SyntaxKind.ExpressionStatement) {
+        logger$i.error(`The JSON5 file format is incorrect, the first child node is not ExpressionStatement. kind: ${expressionStatement.kind}`);
+        return undefined;
+    }
+    const rootObjectLiteralExpression = expressionStatement.expression;
+    if (!rootObjectLiteralExpression) {
+        logger$i.error('The JSON5 file format is incorrect, the first child node is empty.');
+        return undefined;
+    }
+    if (rootObjectLiteralExpression.kind === ts.SyntaxKind.ObjectLiteralExpression) {
+        return rootObjectLiteralExpression;
+    }
+    if (rootObjectLiteralExpression.kind === ts.SyntaxKind.ArrayLiteralExpression) {
+        const elements = rootObjectLiteralExpression.elements;
+        if (elements && elements.length && elements[0].kind === ts.SyntaxKind.ObjectLiteralExpression) {
+            return elements[0];
+        }
+        logger$i.error('The JSON5 file format is incorrect, the node ArrayLiteralExpression first element is not ObjectLiteralExpression.');
+    }
+    logger$i.error('The JSON5 file format is incorrect.');
+    return undefined;
+}
+function parsePropertyInitializer(node, file) {
+    if (node.kind === ts.SyntaxKind.StringLiteral) {
+        return node.text;
+    }
+    else if (node.kind === ts.SyntaxKind.NumericLiteral) {
+        return node.text;
+    }
+    else if (node.kind === ts.SyntaxKind.PrefixUnaryExpression) {
+        return node.getText(file);
+    }
+    else if (node.kind === ts.SyntaxKind.ArrayLiteralExpression) {
+        return parseArrayLiteral(node, file);
+    }
+    else if (node.kind === ts.SyntaxKind.ObjectLiteralExpression) {
+        return parseObjectLiteralExpression(node, file);
+    }
+    else if (node.kind === ts.SyntaxKind.TrueKeyword) {
+        return true;
+    }
+    else if (node.kind === ts.SyntaxKind.FalseKeyword) {
+        return false;
+    }
+    return undefined;
+}
+function parseArrayLiteral(node, file) {
+    const res = [];
+    node.elements.forEach(n => {
+        res.push(parsePropertyInitializer(n, file));
+    });
+    return res;
+}
+function parseObjectLiteralExpression(ObjectLiteralExpression, file) {
+    const res = {};
+    ObjectLiteralExpression.properties.forEach(node => {
+        const propNode = node;
+        const key = propNode.name.text;
+        const value = parsePropertyInitializer(propNode.initializer, file);
+        res[key] = value;
+    });
+    return res;
+}
+
+const logger$h = ConsoleLogger.getLogger();
 /**
  * This class is used to manage all the configurations set up for the analyzer.
  */
@@ -117,9 +208,10 @@ class SceneConfig {
         this.otherSdkMap = new Map();
         this.sdkFiles = [];
         this.sdkFilesMap = new Map();
-        this.projectFiles = [];
+        this.projectFiles = new Map();
         this.logPath = "./out/ArkAnalyzer.log";
         this.hosEtsLoaderPath = '';
+        this.ohPkgContentMap = new Map();
     }
     //----for ArkCiD------
     buildFromJson(configJsonPath) {
@@ -143,6 +235,7 @@ class SceneConfig {
             this.hosEtsLoaderPath = path.join(sdkEtsPath, './build-tools/ets-loader');
             this.logPath = logPath;
             ConsoleLogger.configure(this.logPath, LOG_LEVEL.ERROR);
+            removeSync(transfer2UnixPath(targetProjectDirectory + '/' + this.targetProjectName));
             yield spawnSync('node', [path.join(__dirname, 'ets2ts.js'), this.hosEtsLoaderPath, this.targetProjectOriginDirectory, targetProjectDirectory, this.targetProjectName, this.logPath]);
             this.getAllFiles();
         });
@@ -173,8 +266,7 @@ class SceneConfig {
     }
     getAllFiles() {
         if (this.targetProjectDirectory) {
-            let tmpFiles = getFiles(this.targetProjectDirectory, "\\.ts\$");
-            this.projectFiles.push(...tmpFiles);
+            this.projectFiles = getFiles2PkgMap(this.targetProjectDirectory, new Array(), this.ohPkgContentMap);
         }
         else {
             throw new Error('TargetProjectDirectory is wrong.');
@@ -235,11 +327,14 @@ class SceneConfig {
     getLogPath() {
         return this.logPath;
     }
+    getOhPkgContentMap() {
+        return this.ohPkgContentMap;
+    }
 }
 function getFiles(srcPath, fileExt, tmpFiles = []) {
     let extReg = new RegExp(fileExt);
     if (!fs__default.existsSync(srcPath)) {
-        logger$f.info("Input directory is not exist: ", srcPath);
+        logger$h.info("Input directory is not exist: ", srcPath);
         return tmpFiles;
     }
     const realSrc = fs__default.realpathSync(srcPath);
@@ -259,6 +354,39 @@ function getFiles(srcPath, fileExt, tmpFiles = []) {
         }
     }
     return tmpFiles;
+}
+function getFiles2PkgMap(srcPath, ohPkgFiles, ohPkgContentMap, tmpMap = new Map()) {
+    if (!fs__default.existsSync(srcPath)) {
+        logger$h.info("Input directory is not exist: ", srcPath);
+        return tmpMap;
+    }
+    const realSrc = fs__default.realpathSync(srcPath);
+    let files2Do = fs__default.readdirSync(realSrc);
+    let ohPkgFilesOfThisDir = [];
+    ohPkgFilesOfThisDir.push(...ohPkgFiles);
+    files2Do.forEach((fl) => {
+        if (fl == 'oh-package.json5') {
+            let dirJson5 = path.resolve(realSrc, 'oh-package.json5');
+            ohPkgFilesOfThisDir.push(dirJson5);
+            ohPkgContentMap.set(dirJson5, fetchDependenciesFromFile(dirJson5));
+        }
+    });
+    for (let fileName of files2Do) {
+        if (fileName == 'oh_modules' || fileName == 'node_modules') {
+            continue;
+        }
+        const realFile = path.resolve(realSrc, fileName);
+        if (fs__default.statSync(realFile).isDirectory()) {
+            getFiles2PkgMap(realFile, ohPkgFilesOfThisDir, ohPkgContentMap, tmpMap);
+        }
+        else {
+            const extReg = new RegExp("\\.ts\$");
+            if (extReg.test(realFile)) {
+                tmpMap.set(realFile, ohPkgFilesOfThisDir);
+            }
+        }
+    }
+    return tmpMap;
 }
 
 class Type {
@@ -607,7 +735,7 @@ class Local {
     }
 }
 
-const logger$e = ConsoleLogger.getLogger();
+const logger$g = ConsoleLogger.getLogger();
 class AbstractRef {
 }
 class ArkArrayRef extends AbstractRef {
@@ -634,7 +762,7 @@ class ArkArrayRef extends AbstractRef {
             return baseType.getBaseType();
         }
         else {
-            logger$e.warn(`the type of base in ArrayRef is not ArrayType`);
+            logger$g.warn(`the type of base in ArrayRef is not ArrayType`);
             return UnknownType.getInstance();
         }
     }
@@ -1396,10 +1524,6 @@ class ArkThrowStmt extends Stmt {
     }
 }
 
-function transfer2UnixPath(path2Do) {
-    return path.posix.join(...path2Do.split(/\\/));
-}
-
 class FileSignature {
     constructor() {
         this.projectName = "_UnkownProjectName";
@@ -1676,20 +1800,12 @@ class ModelUtils {
         }
         return null;
     }
-    /** search class iteratively with ClassSignature */
-    static getClassWithClassSignature(classSignature, scene) {
-        return scene.getClass(classSignature);
-    }
-    static getMethodWithMethodSignature(methodSignature, scene) {
-        const arkClass = this.getClassWithClassSignature(methodSignature.getDeclaringClassSignature(), scene);
-        return arkClass.getMethod(methodSignature);
-    }
     static getClassWithNameInNamespaceRecursively(className, ns) {
         if (className == '') {
             return null;
         }
         let res = null;
-        res = this.getClassInNamespaceWithName(className, ns);
+        res = ns.getClassWithName(className);
         if (res == null) {
             let declaringNs = ns.getDeclaringArkNamespace();
             if (declaringNs != null) {
@@ -1717,17 +1833,16 @@ class ModelUtils {
             let nameSpace = this.getNamespaceWithNameFromClass(names[0], startFrom);
             for (let i = 1; i < names.length - 1; i++) {
                 if (nameSpace)
-                    nameSpace = this.getNamespaceInNamespaceWithName(names[i], nameSpace);
+                    nameSpace = nameSpace.getNamespaceWithName(names[i]);
             }
             if (nameSpace) {
-                return this.getClassInNamespaceWithName(names[names.length - 1], nameSpace);
+                return nameSpace.getClassWithName(names[names.length - 1]);
             }
         }
         return null;
     }
     /** search class within the file that contain the given method */
     static getClassWithName(className, startFrom) {
-        //TODO:是否支持类表达式
         if (!className.includes(".")) {
             const thisClass = startFrom.getDeclaringArkClass();
             if (thisClass.getName() == className) {
@@ -1736,7 +1851,7 @@ class ModelUtils {
             const thisNamespace = thisClass.getDeclaringArkNamespace();
             let classSearched = null;
             if (thisNamespace) {
-                classSearched = this.getClassInNamespaceWithName(className, thisNamespace);
+                classSearched = thisNamespace.getClassWithName(className);
                 if (classSearched) {
                     return classSearched;
                 }
@@ -1750,29 +1865,19 @@ class ModelUtils {
             let nameSpace = this.getNamespaceWithName(names[0], startFrom);
             for (let i = 1; i < names.length - 1; i++) {
                 if (nameSpace)
-                    nameSpace = this.getNamespaceInNamespaceWithName(names[i], nameSpace);
+                    nameSpace = nameSpace.getNamespaceWithName(names[i]);
             }
             if (nameSpace) {
-                return this.getClassInNamespaceWithName(names[names.length - 1], nameSpace);
-            }
-        }
-        return null;
-    }
-    /** search class within the given namespace */
-    static getClassInNamespaceWithName(className, arkNamespace) {
-        for (const arkClass of arkNamespace.getClasses()) {
-            if (arkClass.getName() == className) {
-                return arkClass;
+                return nameSpace.getClassWithName(names[names.length - 1]);
             }
         }
         return null;
     }
     /** search class within the given file */
     static getClassInFileWithName(className, arkFile) {
-        for (const arkClass of arkFile.getClasses()) {
-            if (arkClass.getName() == className) {
-                return arkClass;
-            }
+        let classSearched = arkFile.getClassWithName(className);
+        if (classSearched != null) {
+            return classSearched;
         }
         return this.getClassInImportInfoWithName(className, arkFile);
     }
@@ -1799,10 +1904,9 @@ class ModelUtils {
                 if (nameBefroreAs != undefined) {
                     className = nameBefroreAs;
                 }
-                for (const arkClass of arkFile.getClasses()) {
-                    if (arkClass.getName() == className) {
-                        return arkClass;
-                    }
+                let classSearched = arkFile.getClassWithName(className);
+                if (classSearched != null) {
+                    return classSearched;
                 }
                 return this.getClassInImportInfoWithName(className, arkFile);
             }
@@ -1812,23 +1916,22 @@ class ModelUtils {
         }
         if (defaultExport) {
             className = defaultExport.getExportClauseName();
-            for (const arkClass of arkFile.getClasses()) {
-                if (arkClass.getName() == className) {
-                    return arkClass;
-                }
+            let classSearched = arkFile.getClassWithName(className);
+            if (classSearched != null) {
+                return classSearched;
             }
             return this.getClassInImportInfoWithName(className, arkFile);
         }
         return null;
     }
     static getFileFromImportInfo(importInfo, scene) {
-        const signatureStr = importInfo.getImportFromSignature2Str();
+        const importFromSignature = importInfo.getImportFromSignature();
         let file = null;
         if (importInfo.getImportProjectType() == "TargetProject") {
-            file = scene.getFiles().find(file => file.getFileSignature().toString() == signatureStr) || null;
+            file = scene.getFile(importFromSignature);
         }
         else if (importInfo.getImportProjectType() == "SDKProject") {
-            file = scene.getSdkArkFilestMap().get(signatureStr) || null;
+            file = scene.getSdkArkFilestMap().get(importFromSignature) || null;
         }
         return file;
     }
@@ -1838,27 +1941,9 @@ class ModelUtils {
             return startFrom;
         }
         const thisClass = startFrom.getDeclaringArkClass();
-        let methodSearched = this.getMethodInClassWithName(methodName, thisClass);
+        let methodSearched = thisClass.getMethodWithName(methodName);
         if (methodSearched) {
             return methodSearched;
-        }
-        return null;
-    }
-    /** search method within the given class */
-    static getMethodInClassWithName(methodName, arkClass) {
-        for (const method of arkClass.getMethods()) {
-            if (method.getName() == methodName) {
-                return method;
-            }
-        }
-        return null;
-    }
-    /** search field within the given class */
-    static getFieldInClassWithName(fieldName, arkClass) {
-        for (const field of arkClass.getFields()) {
-            if (field.getName() == fieldName) {
-                return field;
-            }
         }
         return null;
     }
@@ -1866,7 +1951,7 @@ class ModelUtils {
         const thisNamespace = startFrom.getDeclaringArkNamespace();
         let namespaceSearched = null;
         if (thisNamespace) {
-            namespaceSearched = this.getNamespaceInNamespaceWithName(namespaceName, thisNamespace);
+            namespaceSearched = thisNamespace.getNamespaceWithName(namespaceName);
             if (namespaceSearched) {
                 return namespaceSearched;
             }
@@ -1880,7 +1965,7 @@ class ModelUtils {
         const thisNamespace = thisClass.getDeclaringArkNamespace();
         let namespaceSearched = null;
         if (thisNamespace) {
-            namespaceSearched = this.getNamespaceInNamespaceWithName(namespaceName, thisNamespace);
+            namespaceSearched = thisNamespace.getNamespaceWithName(namespaceName);
             if (namespaceSearched) {
                 return namespaceSearched;
             }
@@ -1889,19 +1974,10 @@ class ModelUtils {
         namespaceSearched = this.getNamespaceInFileWithName(namespaceName, thisFile);
         return namespaceSearched;
     }
-    static getNamespaceInNamespaceWithName(namespaceName, arkNamespace) {
-        for (const namespace of arkNamespace.getNamespaces()) {
-            if (namespace.getName() == namespaceName) {
-                return namespace;
-            }
-        }
-        return null;
-    }
     static getNamespaceInFileWithName(namespaceName, arkFile) {
-        for (const namespace of arkFile.getNamespaces()) {
-            if (namespace.getName() == namespaceName) {
-                return namespace;
-            }
+        let namespaceSearched = arkFile.getNamespaceWithName(namespaceName);
+        if (namespaceSearched) {
+            return namespaceSearched;
         }
         return this.getNamespaceInImportInfoWithName(namespaceName, arkFile);
     }
@@ -1928,10 +2004,9 @@ class ModelUtils {
                 if (nameBefroreAs != undefined) {
                     namespaceName = nameBefroreAs;
                 }
-                for (const arkNamespace of arkFile.getNamespaces()) {
-                    if (arkNamespace.getName() == namespaceName) {
-                        return arkNamespace;
-                    }
+                let namespaceSearched = arkFile.getNamespaceWithName(namespaceName);
+                if (namespaceSearched) {
+                    return namespaceSearched;
                 }
                 return this.getNamespaceInImportInfoWithName(namespaceName, arkFile);
             }
@@ -1941,10 +2016,9 @@ class ModelUtils {
         }
         if (defaultExport) {
             namespaceName = defaultExport.getExportClauseName();
-            for (const arkNamespace of arkFile.getNamespaces()) {
-                if (arkNamespace.getName() == namespaceName) {
-                    return arkNamespace;
-                }
+            let namespaceSearched = arkFile.getNamespaceWithName(namespaceName);
+            if (namespaceSearched) {
+                return namespaceSearched;
             }
             return this.getNamespaceInImportInfoWithName(namespaceName, arkFile);
         }
@@ -1954,9 +2028,9 @@ class ModelUtils {
         const thisClass = startFrom.getDeclaringArkClass();
         const thisNamespace = thisClass.getDeclaringArkNamespace();
         if (thisNamespace) {
-            const defaultClass = thisNamespace.getClasses().find(cls => cls.getName() == '_DEFAULT_ARK_CLASS') || null;
+            const defaultClass = thisNamespace.getClassWithName('_DEFAULT_ARK_CLASS');
             if (defaultClass) {
-                const method = this.getMethodInClassWithName(methodName, defaultClass);
+                const method = defaultClass.getMethodWithName(methodName);
                 if (method) {
                     return method;
                 }
@@ -1967,7 +2041,7 @@ class ModelUtils {
     static getStaticMethodInFileWithName(methodName, arkFile) {
         const defaultClass = arkFile.getClasses().find(cls => cls.getName() == '_DEFAULT_ARK_CLASS') || null;
         if (defaultClass) {
-            let method = this.getMethodInClassWithName(methodName, defaultClass);
+            let method = defaultClass.getMethodWithName(methodName);
             if (method) {
                 return method;
             }
@@ -1993,16 +2067,15 @@ class ModelUtils {
         let defaultExport = null;
         for (const exportInfo of arkFile.getExportInfos()) {
             if (exportInfo.getExportClauseName() == methodName) {
-                const defaultClass = arkFile.getClasses().find(cls => cls.getName() == '_DEFAULT_ARK_CLASS') || null;
+                const defaultClass = arkFile.getClassWithName('_DEFAULT_ARK_CLASS');
                 if (defaultClass) {
                     const nameBefroreAs = exportInfo.getNameBeforeAs();
                     if (nameBefroreAs != undefined) {
                         methodName = nameBefroreAs;
                     }
-                    for (const arkMethod of defaultClass.getMethods()) {
-                        if (arkMethod.getName() == methodName) {
-                            return arkMethod;
-                        }
+                    let method = defaultClass.getMethodWithName(methodName);
+                    if (method) {
+                        return method;
                     }
                     return this.getStaticMethodInImportInfoWithName(methodName, arkFile);
                 }
@@ -2013,7 +2086,7 @@ class ModelUtils {
         }
         if (defaultExport) {
             methodName = defaultExport.getExportClauseName();
-            const defaultClass = arkFile.getClasses().find(cls => cls.getName() == '_DEFAULT_ARK_CLASS') || null;
+            const defaultClass = arkFile.getClassWithName('_DEFAULT_ARK_CLASS');
             if (defaultClass) {
                 for (const arkMethod of defaultClass.getMethods()) {
                     if (arkMethod.getName() == methodName) {
@@ -2024,6 +2097,35 @@ class ModelUtils {
             }
         }
         return null;
+    }
+    /* get nested namespaces in a file */
+    static getAllNamespacesInFile(arkFile) {
+        const arkNamespaces = arkFile.getNamespaces();
+        for (const arkNamespace of arkFile.getNamespaces()) {
+            this.getAllNamespacesInNamespace(arkNamespace, arkNamespaces);
+        }
+        return arkNamespaces;
+    }
+    /* get nested namespaces in a namespace */
+    static getAllNamespacesInNamespace(arkNamespace, allNamespaces) {
+        allNamespaces.push(...arkNamespace.getNamespaces());
+        for (const nestedNamespace of arkNamespace.getNamespaces()) {
+            this.getAllNamespacesInNamespace(nestedNamespace, allNamespaces);
+        }
+    }
+    static getAllClassesInFile(arkFile) {
+        const allClasses = arkFile.getClasses();
+        this.getAllNamespacesInFile(arkFile).forEach((namespace) => {
+            allClasses.push(...namespace.getClasses());
+        });
+        return allClasses;
+    }
+    static getAllMethodsInFile(arkFile) {
+        const allMethods = [];
+        this.getAllClassesInFile(arkFile).forEach((cls) => {
+            allMethods.push(...cls.getMethods());
+        });
+        return allMethods;
     }
 }
 
@@ -2037,6 +2139,7 @@ class ArkField {
         this.modifiers = new Set();
         this.questionToken = false;
         this.exclamationToken = false;
+        this.atTypeDecorator = "";
     }
     getDeclaringClass() {
         return this.declaringClass;
@@ -2178,6 +2281,12 @@ class ArkField {
     getArkMethodSignature() {
         return this.arkMethodSignature;
     }
+    getAtTypeDecorator() {
+        return this.atTypeDecorator;
+    }
+    setAtTypeDecorator(type) {
+        this.atTypeDecorator = type;
+    }
 }
 
 class ArkBody {
@@ -2213,7 +2322,7 @@ class ArkBody {
     }
 }
 
-const logger$d = ConsoleLogger.getLogger();
+const logger$f = ConsoleLogger.getLogger();
 class ObjectBindingPatternParameter {
     constructor() {
         this.propertyName = "";
@@ -2342,7 +2451,7 @@ function buildMethodInfo4MethodNode(node, sourceFile) {
             }
         }
         else {
-            logger$d.warn("Other method declaration type found!");
+            logger$f.warn("Other method declaration type found!");
         }
     }
     //TODO, hard code
@@ -2400,7 +2509,7 @@ class Constant {
     }
 }
 
-const logger$c = ConsoleLogger.getLogger();
+const logger$e = ConsoleLogger.getLogger();
 function handleQualifiedName(node) {
     let right = node.right.text;
     let left = '';
@@ -2466,7 +2575,7 @@ function buildHeritageClauses(node) {
                 heritageClauseName = handlePropertyAccessExpression(type.expression);
             }
             else {
-                logger$c.warn("Other type expression found!!!");
+                logger$e.warn("Other type expression found!!!");
             }
             heritageClausesMap.set(heritageClauseName, ts__default.SyntaxKind[heritageClause.token]);
         });
@@ -2482,7 +2591,7 @@ function buildTypeParameters(node) {
             typeParameters.push(buildTypeFromPreStr(parametersTypeStr));
         }
         else {
-            logger$c.warn("Other typeparameter found!!!");
+            logger$e.warn("Other typeparameter found!!!");
         }
     });
     return typeParameters;
@@ -2504,7 +2613,7 @@ function buildParameters(node, sourceFile) {
                         paraElement.setPropertyName(element.propertyName.text);
                     }
                     else {
-                        logger$c.warn("New propertyName of ObjectBindingPattern found, please contact developers to support this!");
+                        logger$e.warn("New propertyName of ObjectBindingPattern found, please contact developers to support this!");
                     }
                 }
                 if (element.name) {
@@ -2512,11 +2621,11 @@ function buildParameters(node, sourceFile) {
                         paraElement.setName(element.name.text);
                     }
                     else {
-                        logger$c.warn("New name of ObjectBindingPattern found, please contact developers to support this!");
+                        logger$e.warn("New name of ObjectBindingPattern found, please contact developers to support this!");
                     }
                 }
                 if (element.initializer) {
-                    logger$c.warn("TODO: support ObjectBindingPattern initializer.");
+                    logger$e.warn("TODO: support ObjectBindingPattern initializer.");
                 }
                 if (element.dotDotDotToken) {
                     paraElement.setOptional(true);
@@ -2536,7 +2645,7 @@ function buildParameters(node, sourceFile) {
                             paraElement.setPropertyName(element.propertyName.text);
                         }
                         else {
-                            logger$c.warn("New propertyName of ArrayBindingPattern found, please contact developers to support this!");
+                            logger$e.warn("New propertyName of ArrayBindingPattern found, please contact developers to support this!");
                         }
                     }
                     if (element.name) {
@@ -2544,25 +2653,25 @@ function buildParameters(node, sourceFile) {
                             paraElement.setName(element.name.text);
                         }
                         else {
-                            logger$c.warn("New name of ArrayBindingPattern found, please contact developers to support this!");
+                            logger$e.warn("New name of ArrayBindingPattern found, please contact developers to support this!");
                         }
                     }
                     if (element.initializer) {
-                        logger$c.warn("TODO: support ArrayBindingPattern initializer.");
+                        logger$e.warn("TODO: support ArrayBindingPattern initializer.");
                     }
                     if (element.dotDotDotToken) {
                         paraElement.setOptional(true);
                     }
                 }
                 else if (ts__default.isOmittedExpression(element)) {
-                    logger$c.warn("TODO: support OmittedExpression for ArrayBindingPattern parameter name.");
+                    logger$e.warn("TODO: support OmittedExpression for ArrayBindingPattern parameter name.");
                 }
                 elements.push(paraElement);
             });
             methodParameter.setArrayElements(elements);
         }
         else {
-            logger$c.warn("Parameter name is not identifier, please contact developers to support this!");
+            logger$e.warn("Parameter name is not identifier, please contact developers to support this!");
         }
         if (parameter.questionToken) {
             methodParameter.setOptional(true);
@@ -2618,7 +2727,7 @@ function buildParameters(node, sourceFile) {
                     else if (ts__default.isConstructSignatureDeclaration(member)) ;
                     else if (ts__default.isCallSignatureDeclaration(member)) ;
                     else {
-                        logger$c.warn("Please contact developers to support new TypeLiteral member!");
+                        logger$e.warn("Please contact developers to support new TypeLiteral member!");
                     }
                 });
                 let type = new TypeLiteralType();
@@ -2653,7 +2762,7 @@ function buildReturnType4Method(node, sourceFile) {
                     members.push(buildIndexSignature2ArkField(member, sourceFile));
                 }
                 else {
-                    logger$c.warn("Please contact developers to support new TypeLiteral member!");
+                    logger$e.warn("Please contact developers to support new TypeLiteral member!");
                 }
             });
             let type = new TypeLiteralType();
@@ -2670,7 +2779,7 @@ function buildReturnType4Method(node, sourceFile) {
                 typeName = referenceNodeName.text;
             }
             else {
-                logger$c.warn("New type of referenceNodeName found! Please contact developers to support this.");
+                logger$e.warn("New type of referenceNodeName found! Please contact developers to support this.");
             }
             return new UnclearReferenceType(typeName);
         }
@@ -2686,10 +2795,10 @@ function buildReturnType4Method(node, sourceFile) {
                         typeName = handleQualifiedName(tmpType.typeName);
                     }
                     else if (ts__default.isTypeLiteralNode(tmpType.typeName)) {
-                        logger$c.warn("Type name is TypeLiteral, please contact developers to add support for this!");
+                        logger$e.warn("Type name is TypeLiteral, please contact developers to add support for this!");
                     }
                     else {
-                        logger$c.warn("New type name of TypeReference in UnionType.");
+                        logger$e.warn("New type name of TypeReference in UnionType.");
                     }
                     unionType.push(new UnclearReferenceType(typeName));
                 }
@@ -2787,7 +2896,7 @@ function buildProperty2ArkField(member, sourceFile) {
             field.setName(handlePropertyAccessExpression(member.name.expression));
         }
         else {
-            logger$c.warn("Other property expression type found!");
+            logger$e.warn("Other property expression type found!");
         }
     }
     else if (member.name && ts__default.isIdentifier(member.name)) {
@@ -2795,12 +2904,15 @@ function buildProperty2ArkField(member, sourceFile) {
         field.setName(propertyName);
     }
     else {
-        logger$c.warn("Other property type found!");
+        logger$e.warn("Other property type found!");
     }
     if ((ts__default.isPropertyDeclaration(member) || ts__default.isPropertySignature(member)) && member.modifiers) {
         let modifiers = buildModifiers(member.modifiers);
         modifiers.forEach((modifier) => {
             field.addModifier(modifier);
+            if (modifier == "Type") {
+                handleAtTypeDecorator(field, member.modifiers, sourceFile);
+            }
         });
     }
     if ((ts__default.isPropertyDeclaration(member) || ts__default.isPropertySignature(member)) && member.type) {
@@ -2836,7 +2948,7 @@ function buildGetAccessor2ArkField(member, sourceFile) {
         field.setName(member.name.text);
     }
     else {
-        logger$c.warn("Please contact developers to support new type of GetAccessor name!");
+        logger$e.warn("Please contact developers to support new type of GetAccessor name!");
         field.setName('');
     }
     field.setFieldType(ts__default.SyntaxKind[member.kind]);
@@ -2856,7 +2968,7 @@ function buildFieldType(fieldType) {
                     tmpTypeName = tmpType.typeName.text;
                 }
                 else {
-                    logger$c.warn("Other property type found!");
+                    logger$e.warn("Other property type found!");
                 }
                 unionType.push(new UnclearReferenceType(tmpTypeName));
             }
@@ -2922,12 +3034,12 @@ function tsNode2Value(node, sourceFile) {
                 }
                 else if (arrayArguments.length == 1 && !(arrayArguments[0].getType() instanceof NumberType)) {
                     //TODO, Local number or others
-                    logger$c.warn("TODO, Local number or others.");
+                    logger$e.warn("TODO, Local number or others.");
                 }
                 else if (arrayArguments.length > 1) {
                     let newArrayExpr = new ArkNewArrayExpr(typeArguments, new Constant(arrayArguments.length.toString(), NumberType.getInstance()));
                     //TODO: add each value for this array
-                    logger$c.warn("TODO, Local number or others.");
+                    logger$e.warn("TODO, Local number or others.");
                     return newArrayExpr;
                 }
             }
@@ -2939,7 +3051,7 @@ function tsNode2Value(node, sourceFile) {
             }
         }
         else {
-            logger$c.warn("Other newExpr type found for ts node.");
+            logger$e.warn("Other newExpr type found for ts node.");
         }
     }
     else if (ts__default.isArrayLiteralExpression(node)) {
@@ -3044,12 +3156,28 @@ function tsNode2Value(node, sourceFile) {
         return new ObjectLiteralExpr(arkClass, classType);
     }
     else {
-        logger$c.warn("Other type found for ts node.");
+        logger$e.warn("Other type found for ts node.");
     }
     return new Constant('', UnknownType.getInstance());
 }
+function handleAtTypeDecorator(field, modifiers, sourceFile) {
+    modifiers.forEach((modifier) => {
+        if (ts__default.isDecorator(modifier)) {
+            if (modifier.expression) {
+                if (ts__default.isCallExpression(modifier.expression) && ts__default.isIdentifier(modifier.expression.expression) && modifier.expression.expression.text == "Type") {
+                    const printer = ts__default.createPrinter({ newLine: ts__default.NewLineKind.LineFeed });
+                    const func = modifier.expression.arguments[0];
+                    if (func) {
+                        const bodyText = printer.printNode(ts__default.EmitHint.Unspecified, func.body, sourceFile);
+                        field.setAtTypeDecorator(bodyText);
+                    }
+                }
+            }
+        }
+    });
+}
 
-const logger$b = ConsoleLogger.getLogger();
+const logger$d = ConsoleLogger.getLogger();
 class ClassInfo {
     constructor() {
         this.modifiers = new Set();
@@ -3143,7 +3271,7 @@ function buildClassInfo4ClassNode(node, sourceFile) {
             ts.isConstructSignatureDeclaration(member) || ts.isSetAccessor(member) || ts.isCallSignatureDeclaration(member)
             || ts.isSemicolonClassElement(member)) ;
         else {
-            logger$b.warn("Please contact developers to support new arkfield type!");
+            logger$d.warn("Please contact developers to support new arkfield type!");
         }
     });
     let classInfo = new ClassInfo();
@@ -3158,7 +3286,7 @@ function updateSdkConfigPrefix(sdkName, sdkRelativePath) {
 class ImportInfo {
     constructor() {
         this.clauseType = "";
-        this.importFromSignature2Str = "";
+        this.importFromSignature = "";
         this.importProjectType = "ThirdPartPackage";
     }
     build(importClauseName, importType, importFrom, nameBeforeAs) {
@@ -3167,8 +3295,8 @@ class ImportInfo {
         this.setImportFrom(importFrom);
         this.setNameBeforeAs(nameBeforeAs);
     }
-    getImportFromSignature2Str() {
-        return this.importFromSignature2Str;
+    getImportFromSignature() {
+        return this.importFromSignature;
     }
     getImportProjectType() {
         return this.importProjectType;
@@ -3198,7 +3326,8 @@ class ImportInfo {
             //tmpSig1 = tmpSig1.replace(/^\.\//, '');
             importFromSignature.setFileName(tmpSig1);
             importFromSignature.setProjectName(this.declaringArkFile.getProjectName());
-            this.importFromSignature2Str = importFromSignature.toString();
+            this.importFromSignature = importFromSignature;
+            return;
         }
         // external imports, e.g. @ohos., @kit., @System., @ArkAnalyzer/
         sdkPathMap.forEach((value, key) => {
@@ -3208,7 +3337,8 @@ class ImportInfo {
                 if (pathReg2.test(this.importFrom)) {
                     this.setImportProjectType("SDKProject");
                     let tmpSig = '@' + key + '/' + this.importFrom + ': ';
-                    this.importFromSignature2Str = tmpSig;
+                    this.importFromSignature = tmpSig;
+                    return;
                 }
             }
             // e.g. @ArkAnalyzer/
@@ -3216,12 +3346,25 @@ class ImportInfo {
                 const pathReg3 = new RegExp(`@(${key})\\/`);
                 if (pathReg3.test(this.importFrom)) {
                     this.setImportProjectType("SDKProject");
-                    this.importFromSignature2Str = this.importFrom + ': ';
+                    this.importFromSignature = this.importFrom + ': ';
+                    return;
                 }
             }
         });
-        //third part npm package
-        //TODO
+        // path map
+        // start with '@', but not in sdk, defined in oh-package.json5
+        const ohPkgReg = new RegExp('^@');
+        if (ohPkgReg.test(this.importFrom)) {
+            let originImportPath = getOriginPath(this.importFrom, this.declaringArkFile);
+            if (originImportPath != '') {
+                this.setImportProjectType("TargetProject");
+                const relativeImportPath = path.relative(this.projectPath, originImportPath);
+                importFromSignature.setFileName(relativeImportPath);
+                importFromSignature.setProjectName(this.declaringArkFile.getProjectName());
+                this.importFromSignature = importFromSignature.toString();
+                return;
+            }
+        }
     }
     getImportClauseName() {
         return this.importClauseName;
@@ -3333,6 +3476,54 @@ function buildImportEqualsDeclarationNode(node) {
         importInfos.push(importInfo);
     }
     return importInfos;
+}
+function getOriginPath(importFrom, arkFile) {
+    let res = '';
+    const scene = arkFile.getScene();
+    const ohPkgFiles = arkFile.getOhPackageJson5Path();
+    for (let i = ohPkgFiles.length - 1; i >= 0; i--) {
+        let ohPkgContentMap = scene.getOhPkgContentMap();
+        let info = ohPkgContentMap.get(ohPkgFiles[i]);
+        if (info != undefined) {
+            return ohPkgMatch(info.dependencies, importFrom, ohPkgFiles[i], ohPkgContentMap);
+        }
+    }
+    return res;
+}
+function ohPkgMatch(dependencies, importFrom, ohFilePath, ohPkgContentMap) {
+    let originPath = '';
+    if (!fs__default.statSync(ohFilePath).isDirectory()) {
+        ohFilePath = path.dirname(ohFilePath);
+    }
+    if (dependencies instanceof Object) {
+        Object.entries(dependencies).forEach(([k, v]) => {
+            if (importFrom.startsWith(k)) {
+                const pattern = new RegExp("^(\\.\\.\\/\|\\.\\/)");
+                if (typeof (v) === 'string') {
+                    if (pattern.test(v)) {
+                        originPath = path.join(ohFilePath, v);
+                    }
+                    else if (v.startsWith('file:')) {
+                        originPath = path.join(ohFilePath, v.replace(/^file:/, ''));
+                    }
+                    // check originPath: file? dir? hap? etc.
+                    if ((originPath != '') && (fs__default.statSync(originPath).isDirectory())) {
+                        let info = ohPkgContentMap.get(path.join(originPath, 'oh-package.json5'));
+                        if (info != undefined) {
+                            let fileName = info.main;
+                            if (typeof (fileName) === 'string') {
+                                originPath = path.join(originPath, fileName);
+                            }
+                        }
+                    }
+                    else if (path.extname(originPath) == '.hap') {
+                        originPath = '';
+                    }
+                }
+            }
+        });
+    }
+    return originPath;
 }
 
 class ExportInfo {
@@ -3468,7 +3659,7 @@ function buildExportAssignmentNode(node) {
     return exportInfos;
 }
 
-const logger$a = ConsoleLogger.getLogger();
+const logger$c = ConsoleLogger.getLogger();
 class NamespaceInfo {
     constructor() {
         this.modifiers = new Set();
@@ -3500,12 +3691,12 @@ function buildNamespaceInfo4NamespaceNode(node) {
         namespaceInfo.setName(node.name.text);
     }
     else {
-        logger$a.warn("New namespace name type found. Please contact developers to add support for this!");
+        logger$c.warn("New namespace name type found. Please contact developers to add support for this!");
     }
     return namespaceInfo;
 }
 
-const logger$9 = ConsoleLogger.getLogger();
+const logger$b = ConsoleLogger.getLogger();
 /**
  * ast节点类，属性包括父节点，子节点列表，种类，文本内容，开始位置
  */
@@ -3637,7 +3828,7 @@ class ASTree {
         // this.simplify(this.root);
     }
     singlePrintAST(node, i) {
-        logger$9.info('   '.repeat(i) + node.kind);
+        logger$b.info('   '.repeat(i) + node.kind);
         // logger.info(' '.repeat(i) + node.kind + ":" + node.text)
         if (node.children == null)
             return;
@@ -3647,7 +3838,7 @@ class ASTree {
     }
     printAST() {
         if (this.root == null) {
-            logger$9.warn("no root");
+            logger$b.warn("no root");
         }
         this.singlePrintAST(this.root, 0);
     }
@@ -3670,7 +3861,7 @@ class ASTree {
         block.parent = whileStatement;
         whileStatement.children = [whileKeyword, open, condition, close, block];
         if (!node.parent) {
-            logger$9.error("for without parent");
+            logger$b.error("for without parent");
             process.exit();
         }
         node.parent.children[node.parent.children.indexOf(node)] = whileStatement;
@@ -3898,9 +4089,16 @@ class Cfg {
             else {
                 leftOp = new ArkInstanceFieldRef(cThis, field.getSignature());
             }
-            const assignStmt = new ArkAssignStmt(leftOp, init);
-            index++;
-            stmts.splice(index, 0, assignStmt);
+            if (init instanceof ArkClass)
+                continue;
+            try {
+                const assignStmt = new ArkAssignStmt(leftOp, init);
+                index++;
+                stmts.splice(index, 0, assignStmt);
+            }
+            catch (_a) {
+                console.log(init);
+            }
         }
     }
     // TODO: 整理成类似jimple的输出
@@ -3992,7 +4190,7 @@ class IRUtils {
     }
 }
 
-const logger$8 = ConsoleLogger.getLogger();
+const logger$a = ConsoleLogger.getLogger();
 class StatementBuilder {
     constructor(type, code, astNode, scopeID) {
         this.passTmies = 0;
@@ -4380,7 +4578,7 @@ class CfgBuilder {
                                 }
                             }
                             if (syntaxList == null) {
-                                logger$8.warn("caseClause without syntaxList");
+                                logger$a.warn("caseClause without syntaxList");
                                 process.exit();
                             }
                             if (syntaxList.children.length == 0) {
@@ -4523,7 +4721,7 @@ class CfgBuilder {
                 let p = cstm.nextT;
                 while (p.type.includes("Exit")) {
                     if (p.next == null) {
-                        logger$8.error("exit error");
+                        logger$a.error("exit error");
                         process.exit();
                     }
                     p = p.next;
@@ -4534,7 +4732,7 @@ class CfgBuilder {
                 let p = cstm.nextF;
                 while (p.type.includes("Exit")) {
                     if (p.next == null) {
-                        logger$8.error("exit error");
+                        logger$a.error("exit error");
                         process.exit();
                     }
                     p = p.next;
@@ -4556,7 +4754,7 @@ class CfgBuilder {
                     let p = caseClause;
                     while (p.type.includes("Exit")) {
                         if (p.next == null) {
-                            logger$8.error("exit error");
+                            logger$a.error("exit error");
                             process.exit();
                         }
                         p = p.next;
@@ -4583,7 +4781,7 @@ class CfgBuilder {
                 let p = stm.next;
                 while (p.type.includes("Exit")) {
                     if (p.next == null) {
-                        logger$8.error("error exit");
+                        logger$a.error("error exit");
                         process.exit();
                     }
                     p = p.next;
@@ -4653,7 +4851,7 @@ class CfgBuilder {
         else if (stm.type == "tryStatement") {
             let trystm = stm;
             if (!trystm.tryFirst) {
-                logger$8.error("try without tryFirst");
+                logger$a.error("try without tryFirst");
                 process.exit();
             }
             let tryFirstBlock = this.buildNewBlock([]);
@@ -6071,7 +6269,7 @@ class CfgBuilder {
             parent = stm.astNode.parent;
         else {
             if (!this.entry.astNode) {
-                logger$8.error("entry without astNode");
+                logger$a.error("entry without astNode");
                 process.exit();
             }
             parent = this.entry.astNode;
@@ -6095,7 +6293,7 @@ class CfgBuilder {
             parent = stm.astNode.parent;
         else {
             if (!this.entry.astNode) {
-                logger$8.error("entry without astNode");
+                logger$a.error("entry without astNode");
                 process.exit();
             }
             parent = this.entry.astNode;
@@ -6137,7 +6335,7 @@ class CfgBuilder {
                     last3AC = temp;
                 }
                 if (!stm.astNode) {
-                    logger$8.error("stm without ast");
+                    logger$a.error("stm without ast");
                     process.exit();
                 }
                 let block = stm.astNode.children[this.findChildIndex(stm.astNode, "Block")];
@@ -6306,7 +6504,7 @@ class CfgBuilder {
             functionBodyStr += lineEnd;
         }
         functionBodyStr += '}\n';
-        logger$8.info(functionBodyStr);
+        logger$a.info(functionBodyStr);
         function ifStmtToString(originStmt) {
             var _a, _b;
             let ifStmt = originStmt;
@@ -6384,33 +6582,33 @@ class CfgBuilder {
         }
     }
     printThreeAddressStrs() {
-        logger$8.info('#### printThreeAddressStrs ####');
+        logger$a.info('#### printThreeAddressStrs ####');
         for (const stmt of this.statementArray) {
-            logger$8.info('------ origin stmt: ', stmt.code);
+            logger$a.info('------ origin stmt: ', stmt.code);
             for (const threeAddressstr of stmt.addressCode3) {
-                logger$8.info(threeAddressstr);
+                logger$a.info(threeAddressstr);
             }
         }
     }
     printThreeAddressStrsAndStmts() {
         for (const stmt of this.statementArray) {
             if (stmt.astNode && stmt.code) {
-                logger$8.info('----- origin stmt: ', stmt.code);
-                logger$8.info('-- threeAddressStrs:');
+                logger$a.info('----- origin stmt: ', stmt.code);
+                logger$a.info('-- threeAddressStrs:');
                 for (const threeAddressstr of stmt.addressCode3) {
-                    logger$8.info(threeAddressstr);
+                    logger$a.info(threeAddressstr);
                 }
-                logger$8.info('-- threeAddressStmts:');
+                logger$a.info('-- threeAddressStmts:');
                 for (const threeAddressStmt of stmt.threeAddressStmts) {
-                    logger$8.info(threeAddressStmt);
+                    logger$a.info(threeAddressStmt);
                 }
             }
         }
     }
     printOriginStmts() {
-        logger$8.info('#### printOriginStmts ####');
+        logger$a.info('#### printOriginStmts ####');
         for (const stmt of this.statementArray) {
-            logger$8.info(stmt);
+            logger$a.info(stmt);
         }
     }
     // TODO: Add more APIs to the class 'Cfg', and use these to build Cfg
@@ -6602,7 +6800,7 @@ const BUILDIN_CONTAINER_COMPONENT = new Set([
     'Section', 'Select', 'Shape', 'Sheet', 'SideBarContainer', 'Stack', 'Stepper', 'StepperItem', 'Swiper',
     'Tabs', 'TabContent', 'Text', 'TextPicker', 'TextTimer', 'TextClock', 'TimePicker', 'Toggle', 'WaterFlow',
     'WindowScene', 'XComponent',
-    'ForEach', 'LazyForEach', 'If', 'IfBranch'
+    'ForEach', 'LazyForEach', 'If', 'IfBranch', '__Common__'
 ]);
 const COMPONENT_CREATE_FUNCTION = new Set(['create', 'createWithChild', 'createWithLabel', 'branchId']);
 class ViewTreeNode {
@@ -6780,6 +6978,7 @@ class ViewTree {
                         let node = new ViewTreeNode(`@BuilderParam`, stmt, expr, this);
                         node.buildParam = methodName;
                         treeStack.push(node);
+                        this.root = treeStack.root;
                         continue;
                     }
                     treeStack.popAutomicComponent(name);
@@ -6794,6 +6993,7 @@ class ViewTree {
                             continue;
                         }
                         treeStack.push(node);
+                        this.root = treeStack.root;
                         if (name == 'ForEach' || name == 'LazyForEach') {
                             yield this.parseForEachAnonymousFunc(treeStack, expr);
                         }
@@ -7082,33 +7282,22 @@ function buildNormalArkMethodFromMethodInfo(methodInfo, mtd) {
     });
 }
 
-const logger$7 = ConsoleLogger.getLogger();
+const logger$9 = ConsoleLogger.getLogger();
 class ArkClass {
     constructor() {
         this.originType = "Class";
         this.line = -1;
         this.column = -1;
-        /* // Deprecated
-        private declaringSignature: string;
-        private arkInstancesMap: Map<string, any> = new Map<string, any>();
-        private arkSignature: string; */
         this.superClassName = '';
-        this.extendedClasses = [];
         this.implementedInterfaceNames = [];
         this.modifiers = new Set();
         this.typeParameters = [];
         this.defaultMethod = null;
-        this.methods = [];
-        this.fields = [];
+        // name to model
+        this.methods = new Map();
+        this.fields = new Map();
+        this.extendedClasses = new Map();
     }
-    /* // Deprecated
-    public addArkInstance(arkSignature: string, arkInstance: any) {
-        this.arkInstancesMap.set(arkSignature, arkInstance);
-    }
-
-    public getArkInstancesMap() {
-        return this.arkInstancesMap;
-    } */
     getName() {
         return this.name;
     }
@@ -7201,7 +7390,7 @@ class ArkClass {
         return this.extendedClasses;
     }
     addExtendedClass(extendedClass) {
-        this.extendedClasses.push(extendedClass);
+        this.extendedClasses.set(extendedClass.getName(), extendedClass);
     }
     getImplementedInterfaceNames() {
         return this.implementedInterfaceNames;
@@ -7213,19 +7402,17 @@ class ArkClass {
         return (this.implementedInterfaceNames.indexOf(interfaceName) > -1);
     }
     getField(fieldSignature) {
-        let returnVal = null;
-        this.getFields().forEach((field) => {
-            if (field.getSignature().toString() == fieldSignature.toString()) {
-                returnVal = field;
-            }
-        });
-        return returnVal;
+        const fieldName = fieldSignature.getFieldName();
+        return this.getFieldWithName(fieldName);
+    }
+    getFieldWithName(fieldName) {
+        return this.fields.get(fieldName) || null;
     }
     getFields() {
-        return this.fields;
+        return Array.from(this.fields.values());
     }
     addField(field) {
-        this.fields.push(field);
+        this.fields.set(field.getName(), field);
     }
     addFields(fields) {
         fields.forEach((field) => {
@@ -7248,19 +7435,17 @@ class ArkClass {
         return this.modifiers.has(name);
     }
     getMethods() {
-        return this.methods;
+        return Array.from(this.methods.values());
     }
     getMethod(methodSignature) {
-        let returnVal = null;
-        this.methods.forEach((mtd) => {
-            if (mtd.getSignature().toString() == methodSignature.toString()) {
-                returnVal = mtd;
-            }
-        });
-        return returnVal;
+        const methodName = methodSignature.getMethodSubSignature().getMethodName();
+        return this.getMethodWithName(methodName);
+    }
+    getMethodWithName(methodName) {
+        return this.methods.get(methodName) || null;
     }
     addMethod(method) {
-        this.methods.push(method);
+        this.methods.set(method.getName(), method);
     }
     setDefaultArkMethod(defaultMethod) {
         this.defaultMethod = defaultMethod;
@@ -7300,6 +7485,12 @@ class ArkClass {
             }
         }
         return fields;
+    }
+    getGlobalVariable(globalMap) {
+        if (this.declaringArkNamespace) {
+            return globalMap.get(this.declaringArkNamespace.getNamespaceSignature());
+        }
+        return globalMap.get(this.declaringArkFile.getFileSignature());
     }
 }
 function buildDefaultArkClassFromArkFile(defaultlassNode, arkFile, defaultClass) {
@@ -7383,7 +7574,7 @@ function buildNormalArkClass(clsNode, cls) {
                     if (cld.kind == 'GetAccessor') {
                         let getAccessorName = (_a = cld.methodNodeInfo) === null || _a === void 0 ? void 0 : _a.getAccessorName;
                         if (!getAccessorName) {
-                            logger$7.warn("Cannot get GetAccessorName for method: ", mthd.getSignature().toString());
+                            logger$9.warn("Cannot get GetAccessorName for method: ", mthd.getSignature().toString());
                         }
                         else {
                             cls.getFields().forEach((field) => {
@@ -7407,7 +7598,7 @@ function genDefaultArkMethod(defaultMethodNode, cls) {
     cls.setDefaultArkMethod(defaultMethod);
 }
 
-const logger$6 = ConsoleLogger.getLogger();
+const logger$8 = ConsoleLogger.getLogger();
 class TypeInference {
     constructor(scene) {
         this.scene = scene;
@@ -7415,7 +7606,7 @@ class TypeInference {
     inferTypeInMethod(arkMethod) {
         const body = arkMethod.getBody();
         if (!body) {
-            logger$6.warn('empty body');
+            logger$8.warn('empty body');
             return;
         }
         const cfg = body.getCfg();
@@ -7429,7 +7620,7 @@ class TypeInference {
     inferSimpleTypeInMethod(arkMethod) {
         const body = arkMethod.getBody();
         if (!body) {
-            logger$6.warn('empty body');
+            logger$8.warn('empty body');
             return;
         }
         const cfg = body.getCfg();
@@ -7453,6 +7644,10 @@ class TypeInference {
             }
             else if (expr instanceof ArkInstanceInvokeExpr) {
                 const base = expr.getBase();
+                if (!(base instanceof Local)) {
+                    logger$8.warn("invoke expr base is not local");
+                    continue;
+                }
                 let type = base.getType();
                 if (type instanceof UnknownType) {
                     const arkClass = ModelUtils.getClassWithName(base.getName(), arkMethod);
@@ -7464,8 +7659,8 @@ class TypeInference {
                         const arkNamespace = ModelUtils.getNamespaceWithName(base.getName(), arkMethod);
                         if (arkNamespace) {
                             const methodName = expr.getMethodSignature().getMethodSubSignature().getMethodName();
-                            const defaultClass = arkNamespace.getClasses().find(cls => cls.getName() == '_DEFAULT_ARK_CLASS') || null;
-                            const foundMethod = ModelUtils.getMethodInClassWithName(methodName, defaultClass);
+                            const defaultClass = arkNamespace.getClassWithName('_DEFAULT_ARK_CLASS');
+                            const foundMethod = defaultClass === null || defaultClass === void 0 ? void 0 : defaultClass.getMethodWithName(methodName);
                             if (foundMethod) {
                                 let replaceStaticInvokeExpr = new ArkStaticInvokeExpr(foundMethod.getSignature(), expr.getArgs());
                                 if (stmt.containsInvokeExpr()) {
@@ -7490,19 +7685,20 @@ class TypeInference {
                     }
                 }
                 if (!(type instanceof ClassType)) {
-                    logger$6.warn(`type of base must be ClassType expr: ${expr.toString()}`);
+                    logger$8.warn(`type of base must be ClassType expr: ${expr.toString()}`);
                     continue;
                 }
-                const arkClass = ModelUtils.getClassWithClassSignature(type.getClassSignature(), this.scene);
+                // TODO: 对于taskpool.Task.constructor(), 其base类型为Task类，但是查询为空，导致函数签名无法解析
+                const arkClass = this.scene.getClass(type.getClassSignature());
                 if (arkClass == null) {
-                    logger$6.warn(`class ${type.getClassSignature().getClassName()} does not exist`);
+                    logger$8.warn(`class ${type.getClassSignature().getClassName()} does not exist`);
                     continue;
                 }
                 const methodSignature = expr.getMethodSignature();
                 const methodName = methodSignature.getMethodSubSignature().getMethodName();
-                const method = ModelUtils.getMethodInClassWithName(methodName, arkClass);
+                const method = arkClass.getMethodWithName(methodName);
                 if (method == null) {
-                    logger$6.warn(`method ${methodName} does not exist`);
+                    logger$8.warn(`method ${methodName} does not exist`);
                     continue;
                 }
                 // infer return type
@@ -7532,7 +7728,7 @@ class TypeInference {
                 const methodName = methodSignature.getMethodSubSignature().getMethodName();
                 const method = ModelUtils.getStaticMethodWithName(methodName, arkMethod);
                 if (method == null) {
-                    logger$6.warn(`method ${methodName} does not exist`);
+                    logger$8.warn(`method ${methodName} does not exist`);
                     continue;
                 }
                 expr.setMethodSignature(method.getSignature());
@@ -7578,7 +7774,12 @@ class TypeInference {
         }
     }
     handleClassField(field, arkMethod) {
-        const base = field.getBase(), baseName = base.getName();
+        const base = field.getBase();
+        if (!(base instanceof Local)) {
+            logger$8.warn("field ref base is not local");
+            return null;
+        }
+        const baseName = base.getName();
         const type = base.getType();
         const fieldName = field.getFieldName();
         let arkClass;
@@ -7587,24 +7788,24 @@ class TypeInference {
             if (!arkClass) {
                 const nameSpace = ModelUtils.getNamespaceWithName(baseName, arkMethod);
                 if (!nameSpace) {
-                    logger$6.warn("Unclear Base");
-                    return;
+                    logger$8.warn("Unclear Base");
+                    return null;
                 }
-                const clas = ModelUtils.getClassInNamespaceWithName(fieldName, nameSpace);
+                const clas = nameSpace.getClassWithName(fieldName);
                 return clas;
             }
         }
         else {
-            arkClass = ModelUtils.getClassWithClassSignature(type.getClassSignature(), this.scene);
+            arkClass = this.scene.getClass(type.getClassSignature());
             if (arkClass == null) {
-                logger$6.warn(`class ${type.getClassSignature().getClassName()} does not exist`);
-                return;
+                logger$8.warn(`class ${type.getClassSignature().getClassName()} does not exist`);
+                return null;
             }
         }
-        const arkField = ModelUtils.getFieldInClassWithName(fieldName, arkClass);
+        const arkField = arkClass.getFieldWithName(fieldName);
         if (arkField == null) {
-            logger$6.warn(`field ${fieldName} does not exist`);
-            return;
+            logger$8.warn(`field ${fieldName} does not exist`);
+            return null;
         }
         let fieldType = arkField.getType();
         if (fieldType instanceof UnclearReferenceType) {
@@ -7763,7 +7964,7 @@ class TypeInference {
         if (methodReturnType instanceof UnclearReferenceType) {
             let returnInstance = ModelUtils.getClassWithName(methodReturnType.getName(), method);
             if (returnInstance == null) {
-                logger$6.warn("can not get method return value type: " +
+                logger$8.warn("can not get method return value type: " +
                     method.getSignature().toString() + ": " + methodReturnType.getName());
             }
             else {
@@ -8162,7 +8363,7 @@ class ObjectLiteralExpr extends AbstractExpr {
     }
 }
 
-const logger$5 = ConsoleLogger.getLogger();
+const logger$7 = ConsoleLogger.getLogger();
 class MethodSignatureManager {
     constructor() {
         this._workList = [];
@@ -8217,12 +8418,10 @@ class SceneManager {
             // 支持SDK调用解析
             let sdkMap = this.scene.getSdkArkFilestMap();
             for (let file of sdkMap.values()) {
-                if (file.getFileSignature().toString() ==
-                    method.getDeclaringClassSignature().getDeclaringFileSignature().toString()) {
-                    const methods = file.getAllMethodsUnderThisFile();
+                if (file.getFileSignature().toString() == method.getDeclaringClassSignature().getDeclaringFileSignature().toString()) {
+                    const methods = ModelUtils.getAllMethodsInFile(file);
                     for (let methodUnderFile of methods) {
-                        if (method.toString() ==
-                            methodUnderFile.getSignature().toString()) {
+                        if (method.toString() == methodUnderFile.getSignature().toString()) {
                             return methodUnderFile;
                         }
                     }
@@ -8240,7 +8439,7 @@ class SceneManager {
                 .get(arkClass.getDeclaringFileSignature().toString());
             // TODO: support get sdk class, targetProject class waiting to be supported
             if (sdkOrTargetProjectFile != null) {
-                for (let classUnderFile of sdkOrTargetProjectFile.getAllClassesUnderThisFile()) {
+                for (let classUnderFile of ModelUtils.getAllClassesInFile(sdkOrTargetProjectFile)) {
                     if (classUnderFile.getSignature().toString() === arkClass.toString()) {
                         return classUnderFile;
                     }
@@ -8257,7 +8456,7 @@ class SceneManager {
             let tempClass = classList.shift();
             if (tempClass == null)
                 continue;
-            let firstLevelSubclasses = tempClass.getExtendedClasses();
+            let firstLevelSubclasses = Array.from(tempClass.getExtendedClasses().values());
             if (firstLevelSubclasses) {
                 for (let subclass of firstLevelSubclasses) {
                     if (!isItemRegistered(subclass, extendedClasses, (a, b) => a.getSignature().toString() === b.getSignature().toString())) {
@@ -8297,25 +8496,25 @@ function splitStringWithRegex(input) {
 }
 function printCallGraphDetails(methods, calls, rootDir) {
     // 打印 Methods
-    logger$5.info("Call Graph:\n");
-    logger$5.info('\tMethods:');
+    logger$7.info("Call Graph:\n");
+    logger$7.info('\tMethods:');
     methods.forEach(method => {
-        logger$5.info(`\t\t${method}`);
+        logger$7.info(`\t\t${method}`);
     });
     // 打印 Calls
-    logger$5.info('\tCalls:');
+    logger$7.info('\tCalls:');
     // 计算最长的method名称的长度，加上箭头和空格的长度
     Array.from(calls.keys()).reduce((max, method) => Math.max(max, method.toString().length), 0);
     const arrow = '->';
     calls.forEach((calledMethods, method) => {
         // 对于每个调用源，只打印一次调用源和第一个目标方法
         const modifiedMethodName = `<${method}`;
-        logger$5.info(`\t\t${modifiedMethodName.padEnd(4)}   ${arrow}`);
+        logger$7.info(`\t\t${modifiedMethodName.padEnd(4)}   ${arrow}`);
         for (let i = 0; i < calledMethods.length; i++) {
             const modifiedCalledMethod = `\t\t<${calledMethods[i]}`;
-            logger$5.info(`\t\t${modifiedCalledMethod}`);
+            logger$7.info(`\t\t${modifiedCalledMethod}`);
         }
-        logger$5.info("\n");
+        logger$7.info("\n");
     });
 }
 function extractLastBracketContent(input) {
@@ -8455,7 +8654,7 @@ class AbstractCallGraph {
             return false;
         if (this.signatureManager.findInProcessedList(method))
             return false;
-        const ifProjectMethod = this.scene.scene.arkFiles.some(arkFile => arkFile.getFileSignature().toString() ===
+        const ifProjectMethod = this.scene.scene.getFiles().some(arkFile => arkFile.getFileSignature().toString() ===
             method.getDeclaringClassSignature().getDeclaringFileSignature().toString());
         return ifProjectMethod;
     }
@@ -8922,7 +9121,7 @@ class PointerTargetPair {
     }
 }
 
-const logger$4 = ConsoleLogger.getLogger();
+const logger$6 = ConsoleLogger.getLogger();
 class PointerFlowGraph {
     constructor() {
         this.pointerFlowEdges = new Map();
@@ -9012,21 +9211,21 @@ class PointerFlowGraph {
         return false;
     }
     printPointerFlowGraph() {
-        logger$4.info("PointerFlowGraph Elements: ");
+        logger$6.info("PointerFlowGraph Elements: ");
         for (let element of this.getPointerSet()) {
-            logger$4.info("\t" + element.toString());
+            logger$6.info("\t" + element.toString());
         }
-        logger$4.info("PointerFlowGraph Edges: ");
+        logger$6.info("PointerFlowGraph Edges: ");
         for (let element of this.pointerFlowEdges.keys()) {
-            logger$4.info("\t" + element.toString());
+            logger$6.info("\t" + element.toString());
             for (let values of this.getPointerFlowEdges(element)) {
-                logger$4.info("\t\t" + values.toString());
+                logger$6.info("\t\t" + values.toString());
             }
         }
     }
 }
 
-const logger$3 = ConsoleLogger.getLogger();
+const logger$5 = ConsoleLogger.getLogger();
 class VariablePointerAnalysisAlogorithm extends AbstractCallGraph {
     constructor(scene) {
         super(scene);
@@ -9245,7 +9444,7 @@ class VariablePointerAnalysisAlogorithm extends AbstractCallGraph {
         }
         let arkClassInstance = this.scene.getClass(type.getClassSignature());
         if (arkClassInstance == null) {
-            logger$3.error("can not resolve classtype: " + type.toString());
+            logger$5.error("can not resolve classtype: " + type.toString());
             return null;
         }
         const methodInstances = arkClassInstance.getMethods();
@@ -9280,60 +9479,22 @@ class ArkNamespace {
         this.declaringArkNamespace = null;
         this.modifiers = new Set();
         this.exportInfos = [];
-        this.namespaces = [];
-        this.classes = [];
-    }
-    getMethodAllTheNamespace(methodSignature) {
-        let classSig = methodSignature.getDeclaringClassSignature();
-        let cls = this.getClassAllTheNamespace(classSig);
-        if (cls) {
-            return cls.getMethod(methodSignature);
-        }
-        return null;
-    }
-    getClassAllTheNamespace(classSignature) {
-        if (classSignature.getDeclaringFileSignature().toString() != this.getNamespaceSignature().getDeclaringFileSignature().toString()) {
-            return null;
-        }
-        let nsSig = classSignature.getDeclaringNamespaceSignature();
-        if (nsSig) {
-            let ns = this.getNamespaceAllTheNamespace(nsSig);
-            if (ns) {
-                return ns.getClassAllTheNamespace(classSignature);
-            }
-        }
-        return null;
+        // name to model
+        this.namespaces = new Map(); // don't contain nested namespace
+        this.classes = new Map();
     }
     addNamespace(namespace) {
-        this.namespaces.push(namespace);
+        this.namespaces.set(namespace.getName(), namespace);
     }
     getNamespace(namespaceSignature) {
-        const foundNamespace = this.namespaces.find(ns => ns.getNamespaceSignature().toString() == namespaceSignature.toString());
-        return foundNamespace || null;
+        const namespaceName = namespaceSignature.getNamespaceName();
+        return this.getNamespaceWithName(namespaceName);
     }
-    getNamespaceAllTheNamespace(namespaceSignature) {
-        let returnVal = null;
-        let declaringNamespaceSignature = namespaceSignature.getDeclaringNamespaceSignature();
-        if (!declaringNamespaceSignature) {
-            return null;
-        }
-        if (declaringNamespaceSignature.toString() == this.namespaceSignature.toString()) {
-            this.namespaces.forEach((ns) => {
-                if (ns.getNamespaceSignature().toString() == namespaceSignature.toString()) {
-                    returnVal = ns;
-                }
-            });
-        }
-        else {
-            let declaringNamespace = this.getNamespaceAllTheNamespace(declaringNamespaceSignature);
-            if (declaringNamespace) {
-                returnVal = declaringNamespace.getNamespace(namespaceSignature);
-            }
-        }
-        return returnVal;
+    getNamespaceWithName(namespaceName) {
+        return this.namespaces.get(namespaceName) || null;
     }
     getNamespaces() {
-        return this.namespaces;
+        return Array.from(this.namespaces.values());
     }
     genNamespaceSignature() {
         let namespaceSignature = new NamespaceSignature();
@@ -9418,27 +9579,17 @@ class ArkNamespace {
         return this.modifiers.has(name);
     }
     getClass(classSignature) {
-        const foundClass = this.classes.find(cls => cls.getSignature().toString() == classSignature.toString());
-        return foundClass || null;
+        const className = classSignature.getClassName();
+        return this.getClassWithName(className);
+    }
+    getClassWithName(Class) {
+        return this.classes.get(Class) || null;
     }
     getClasses() {
-        return this.classes;
-    }
-    updateClass(arkClass) {
-        for (let i = 0; i < this.classes.length; i++) {
-            if (this.classes[i].getSignature().toString() == arkClass.getSignature().toString()) {
-                this.classes.splice(i, 1);
-            }
-        }
-        this.classes.push(arkClass);
+        return Array.from(this.classes.values());
     }
     addArkClass(arkClass) {
-        if (this.getClass(arkClass.getSignature())) {
-            this.updateClass(arkClass);
-        }
-        else {
-            this.classes.push(arkClass);
-        }
+        this.classes.set(arkClass.getName(), arkClass);
     }
     isExported() {
         return this.containsModifier('ExportKeyword');
@@ -9467,7 +9618,7 @@ class ArkNamespace {
     }
     getAllClassesUnderThisNamespace() {
         let classes = [];
-        classes.push(...this.classes);
+        classes.push(...this.classes.values());
         this.namespaces.forEach((ns) => {
             classes.push(...ns.getAllClassesUnderThisNamespace());
         });
@@ -9475,7 +9626,7 @@ class ArkNamespace {
     }
     getAllNamespacesUnderThisNamespace() {
         let namespaces = [];
-        namespaces.push(...this.namespaces);
+        namespaces.push(...this.namespaces.values());
         this.namespaces.forEach((ns) => {
             namespaces.push(...ns.getAllNamespacesUnderThisNamespace());
         });
@@ -9626,10 +9777,12 @@ const notStmtOrExprKind = ['ModuleDeclaration', 'ClassDeclaration', 'InterfaceDe
 class ArkFile {
     constructor() {
         this.projectName = "";
-        this.namespaces = [];
-        this.classes = [];
+        // name to model
+        this.namespaces = new Map(); // don't contain nested namespaces
+        this.classes = new Map(); // don't contain class in namespace
         this.importInfos = [];
         this.exportInfos = [];
+        this.ohPackageJson5Path = [];
     }
     setName(name) {
         this.name = name;
@@ -9661,21 +9814,8 @@ class ArkFile {
     getCode() {
         return this.code;
     }
-    updateClass(arkClass) {
-        for (let i = 0; i < this.classes.length; i++) {
-            if (this.classes[i].getSignature().toString() == arkClass.getSignature().toString()) {
-                this.classes.splice(i, 1);
-            }
-        }
-        this.classes.push(arkClass);
-    }
     addArkClass(arkClass) {
-        if (this.getClass(arkClass.getSignature())) {
-            this.updateClass(arkClass);
-        }
-        else {
-            this.classes.push(arkClass);
-        }
+        this.classes.set(arkClass.getName(), arkClass);
     }
     getDefaultClass() {
         return this.defaultClass;
@@ -9684,77 +9824,27 @@ class ArkFile {
         this.defaultClass = defaultClass;
     }
     getNamespace(namespaceSignature) {
-        const foundNamespace = this.namespaces.find(ns => ns.getNamespaceSignature().toString() == namespaceSignature.toString());
-        return foundNamespace || null;
+        const namespaceName = namespaceSignature.getNamespaceName();
+        return this.getNamespaceWithName(namespaceName);
+    }
+    getNamespaceWithName(namespaceName) {
+        return this.namespaces.get(namespaceName) || null;
     }
     getNamespaces() {
-        return this.namespaces;
+        return Array.from(this.namespaces.values());
     }
     getClass(classSignature) {
-        const foundClass = this.classes.find(cls => cls.getSignature().toString() == classSignature.toString());
-        return foundClass || null;
+        const className = classSignature.getClassName();
+        return this.getClassWithName(className);
+    }
+    getClassWithName(Class) {
+        return this.classes.get(Class) || null;
     }
     getClasses() {
-        return this.classes;
+        return Array.from(this.classes.values());
     }
     addNamespace(namespace) {
-        this.namespaces.push(namespace);
-    }
-    getMethodAllTheFile(methodSignature) {
-        let returnVal = null;
-        let namespaceSig = methodSignature.getDeclaringClassSignature().getDeclaringNamespaceSignature();
-        if (namespaceSig != null) {
-            let namespace = this.getNamespaceAllTheFile(namespaceSig);
-            if (namespace) {
-                returnVal = namespace.getMethodAllTheNamespace(methodSignature);
-            }
-        }
-        else {
-            let classSig = methodSignature.getDeclaringClassSignature();
-            let cls = this.getClass(classSig);
-            if (cls) {
-                returnVal = cls.getMethod(methodSignature);
-            }
-        }
-        return returnVal;
-    }
-    getClassAllTheFile(classSignature) {
-        let returnVal = null;
-        let fileSig = classSignature.getDeclaringFileSignature();
-        if (fileSig.toString() != this.fileSignature.toString()) {
-            return null;
-        }
-        else {
-            let namespaceSig = classSignature.getDeclaringNamespaceSignature();
-            if (namespaceSig) {
-                let ns = this.getNamespaceAllTheFile(namespaceSig);
-                if (ns) {
-                    returnVal = ns.getClass(classSignature);
-                }
-            }
-            else {
-                returnVal = this.getClass(classSignature);
-            }
-        }
-        return returnVal;
-    }
-    getNamespaceAllTheFile(namespaceSignature) {
-        let returnVal = null;
-        let declaringNamespaceSignature = namespaceSignature.getDeclaringNamespaceSignature();
-        if (!declaringNamespaceSignature) {
-            this.namespaces.forEach((ns) => {
-                if (ns.getNamespaceSignature().toString() == namespaceSignature.toString()) {
-                    returnVal = ns;
-                }
-            });
-        }
-        else {
-            let declaringNamespace = this.getNamespaceAllTheFile(declaringNamespaceSignature);
-            if (declaringNamespace) {
-                returnVal = declaringNamespace.getNamespace(namespaceSignature);
-            }
-        }
-        return returnVal;
+        this.namespaces.set(namespace.getName(), namespace);
     }
     getImportInfos() {
         return this.importInfos;
@@ -9774,6 +9864,12 @@ class ArkFile {
     getProjectName() {
         return this.projectName;
     }
+    setOhPackageJson5Path(ohPackageJson5Path) {
+        this.ohPackageJson5Path = ohPackageJson5Path;
+    }
+    getOhPackageJson5Path() {
+        return this.ohPackageJson5Path;
+    }
     genFileSignature() {
         let fileSignature = new FileSignature();
         fileSignature.setFileName(this.name);
@@ -9783,27 +9879,9 @@ class ArkFile {
     getFileSignature() {
         return this.fileSignature;
     }
-    getAllMethodsUnderThisFile() {
-        let methods = [];
-        this.classes.forEach((cls) => {
-            methods.push(...cls.getMethods());
-        });
-        this.namespaces.forEach((ns) => {
-            methods.push(...ns.getAllMethodsUnderThisNamespace());
-        });
-        return methods;
-    }
-    getAllClassesUnderThisFile() {
-        let classes = [];
-        classes.push(...this.classes);
-        this.namespaces.forEach((ns) => {
-            classes.push(...ns.getAllClassesUnderThisNamespace());
-        });
-        return classes;
-    }
     getAllNamespacesUnderThisFile() {
         let namespaces = [];
-        namespaces.push(...this.namespaces);
+        namespaces.push(...this.namespaces.values());
         this.namespaces.forEach((ns) => {
             namespaces.push(...ns.getAllNamespacesUnderThisNamespace());
         });
@@ -9991,7 +10069,7 @@ function addExportInfo(arkInstance, arkFile, isDefault) {
     arkFile.addExportInfos(exportInfo);
 }
 
-const logger$2 = ConsoleLogger.getLogger();
+const logger$4 = ConsoleLogger.getLogger();
 class VisibleValue {
     constructor() {
         // TODO:填充全局变量
@@ -10015,7 +10093,7 @@ class VisibleValue {
         else {
             name = model.getName();
         }
-        logger$2.info('---- into scope:{', name, '}');
+        logger$4.info('---- into scope:{', name, '}');
         // get values in this scope
         let values = [];
         if (model instanceof ArkFile || model instanceof ArkNamespace) {
@@ -10044,7 +10122,7 @@ class VisibleValue {
         else {
             name = currModel.getName();
         }
-        logger$2.info('---- out scope:{', name, '}');
+        logger$4.info('---- out scope:{', name, '}');
         let targetDepth = this.currScope.depth;
         if (currModel instanceof BasicBlock) {
             const successorsCnt = currModel.getSuccessors().length;
@@ -10152,7 +10230,7 @@ class Scope {
     }
 }
 
-const logger$1 = ConsoleLogger.getLogger();
+const logger$3 = ConsoleLogger.getLogger();
 /**
  * The Scene class includes everything in the analyzed project.
  * We should be able to re-generate the project's code based on this class.
@@ -10160,20 +10238,20 @@ const logger$1 = ConsoleLogger.getLogger();
 class Scene {
     constructor(sceneConfig) {
         this.projectName = '';
-        this.projectFiles = [];
-        this.arkFiles = [];
-        //sdkArkFiles: ArkFile[] = [];
-        this.targetProjectArkFilesMap = new Map();
+        this.projectFiles = new Map();
+        // TODO: type of key should be signature object
         this.sdkArkFilestMap = new Map();
         this.extendedClasses = new Map();
         this.globalImportInfos = [];
         this.sdkFilesProjectMap = new Map();
         // values that are visible in curr scope
         this.visibleValue = new VisibleValue();
-        // all classes and methods, just for demo
-        this.allClasses = [];
-        this.allMethods = [];
-        this.classCached = new Map();
+        // signature string to model
+        this.filesMap = new Map();
+        this.namespacesMap = new Map();
+        this.classesMap = new Map();
+        this.methodsMap = new Map();
+        this.ohPkgContentMap = new Map();
         this.projectName = sceneConfig.getTargetProjectName();
         this.projectFiles = sceneConfig.getProjectFiles();
         this.realProjectDir = fs__default.realpathSync(sceneConfig.getTargetProjectDirectory());
@@ -10183,11 +10261,21 @@ class Scene {
         this.systemSdkPath = sceneConfig.getSystemSdkPath();
         this.sdkFilesProjectMap = sceneConfig.getSdkFilesMap();
         this.otherSdkMap = sceneConfig.getOtherSdkMap();
+        this.ohPkgContentMap = sceneConfig.getOhPkgContentMap();
         // add sdk reative path to Import builder
         this.configImportSdkPrefix();
         this.genArkFiles();
         //post actions
         this.collectProjectImportInfos();
+    }
+    getRealProjectDir() {
+        return this.realProjectDir;
+    }
+    getRealProjectOriginDir() {
+        return this.realProjectOriginDir;
+    }
+    getProjectName() {
+        return this.projectName;
     }
     configImportSdkPrefix() {
         if (this.ohosSdkPath) {
@@ -10226,122 +10314,86 @@ class Scene {
                     }
                 }
                 key.forEach((file) => {
-                    logger$1.info('=== parse file:', file);
+                    logger$3.info('=== parse file:', file);
                     let arkFile = new ArkFile();
+                    arkFile.setScene(this);
                     arkFile.setProjectName(sdkProjectName);
                     buildArkFileFromFile(file, realSdkProjectDir, arkFile);
-                    arkFile.setScene(this);
                     this.sdkArkFilestMap.set(arkFile.getFileSignature().toString(), arkFile);
                 });
             }
         });
-        this.projectFiles.forEach((file) => {
-            logger$1.info('=== parse file:', file);
+        this.projectFiles.forEach((value, key) => {
+            logger$3.info('=== parse file:', key);
             let arkFile = new ArkFile();
-            arkFile.setProjectName(this.projectName);
-            buildArkFileFromFile(file, this.realProjectDir, arkFile);
             arkFile.setScene(this);
-            this.arkFiles.push(arkFile);
-            this.targetProjectArkFilesMap.set(arkFile.getFileSignature().toString(), arkFile);
+            arkFile.setProjectName(this.projectName);
+            arkFile.setOhPackageJson5Path(value);
+            buildArkFileFromFile(key, this.realProjectDir, arkFile);
+            this.filesMap.set(arkFile.getFileSignature().toString(), arkFile);
         });
     }
     getFile(fileSignature) {
-        const foundFile = this.arkFiles.find(fl => fl.getFileSignature().toString() == fileSignature.toString());
-        return foundFile || null;
+        return this.filesMap.get(fileSignature.toString()) || null;
     }
     getFiles() {
-        return this.arkFiles;
-    }
-    getTargetProjectArkFilesMap() {
-        return this.targetProjectArkFilesMap;
+        return Array.from(this.filesMap.values());
     }
     getSdkArkFilestMap() {
         return this.sdkArkFilestMap;
     }
     getNamespace(namespaceSignature) {
-        let returnVal = null;
-        if (namespaceSignature instanceof NamespaceSignature) {
-            let fileSig = namespaceSignature.getDeclaringFileSignature();
-            this.arkFiles.forEach((fl) => {
-                if (fl.getFileSignature().toString() == fileSig.toString()) {
-                    returnVal = fl.getNamespaceAllTheFile(namespaceSignature);
-                }
-            });
+        return this.getNamespacesMap().get(namespaceSignature.toString()) || null;
+    }
+    getNamespacesMap() {
+        if (this.namespacesMap.size == 0) {
+            for (const file of this.getFiles()) {
+                ModelUtils.getAllNamespacesInFile(file).forEach((namespace) => {
+                    this.namespacesMap.set(namespace.getNamespaceSignature().toString(), namespace);
+                });
+            }
         }
-        else {
-            this.getAllNamespacesUnderTargetProject().forEach((ns) => {
-                if (ns.getNamespaceSignature().toString() == namespaceSignature) {
-                    returnVal = ns;
-                }
-            });
-        }
-        return returnVal;
+        return this.namespacesMap;
+    }
+    getNamespaces() {
+        return Array.from(this.getNamespacesMap().values());
     }
     getClass(classSignature) {
-        let classSearched = null;
-        if (classSignature instanceof ClassSignature) {
-            if (this.classCached.has(classSignature)) {
-                classSearched = this.classCached.get(classSignature) || null;
-            }
-            else {
-                const fileSig = classSignature.getDeclaringFileSignature().toString();
-                const arkFile = this.targetProjectArkFilesMap.get(fileSig);
-                if (arkFile) {
-                    classSearched = arkFile.getClassAllTheFile(classSignature);
+        return this.getClassesMap().get(classSignature.toString()) || null;
+    }
+    getClassesMap() {
+        if (this.classesMap.size == 0) {
+            for (const file of this.getFiles()) {
+                for (const cls of file.getClasses()) {
+                    this.classesMap.set(cls.getSignature().toString(), cls);
                 }
-                this.classCached.set(classSignature, classSearched);
+            }
+            for (const namespace of this.getNamespacesMap().values()) {
+                for (const cls of namespace.getClasses()) {
+                    this.classesMap.set(cls.getSignature().toString(), cls);
+                }
             }
         }
-        else {
-            this.getAllClassesUnderTargetProject().forEach((cls) => {
-                if (cls.getSignature().toString() == classSignature) {
-                    classSearched = cls;
-                }
-            });
-        }
-        return classSearched;
+        return this.classesMap;
+    }
+    getClasses() {
+        return Array.from(this.getClassesMap().values());
     }
     getMethod(methodSignature) {
-        let returnVal = null;
-        if (methodSignature instanceof MethodSignature) {
-            let fileSig = methodSignature.getDeclaringClassSignature().getDeclaringFileSignature();
-            this.arkFiles.forEach((fl) => {
-                if (fl.getFileSignature().toString() == fileSig.toString()) {
-                    returnVal = fl.getMethodAllTheFile(methodSignature);
+        return this.getMethodsMap().get(methodSignature.toString()) || null;
+    }
+    getMethodsMap() {
+        if (this.methodsMap.size == 0) {
+            for (const cls of this.getClassesMap().values()) {
+                for (const method of cls.getMethods()) {
+                    this.methodsMap.set(method.getSignature().toString(), method);
                 }
-            });
+            }
         }
-        else {
-            this.getAllMethodsUnderTargetProject().forEach((mtd) => {
-                if (mtd.getSignature().toString() == methodSignature) {
-                    returnVal = mtd;
-                }
-            });
-        }
-        return returnVal;
+        return this.methodsMap;
     }
-    getAllNamespacesUnderTargetProject() {
-        let namespaces = [];
-        this.arkFiles.forEach((fl) => {
-            namespaces.push(...fl.getAllNamespacesUnderThisFile());
-        });
-        return namespaces;
-    }
-    getAllClassesUnderTargetProject() {
-        if (this.allClasses.length == 0) {
-            this.arkFiles.forEach((fl) => {
-                this.allClasses.push(...fl.getAllClassesUnderThisFile());
-            });
-        }
-        return this.allClasses;
-    }
-    getAllMethodsUnderTargetProject() {
-        if (this.allMethods.length == 0) {
-            this.arkFiles.forEach((fl) => {
-                this.allMethods.push(...fl.getAllMethodsUnderThisFile());
-            });
-        }
-        return this.allMethods;
+    getMethods() {
+        return Array.from(this.getMethodsMap().values());
     }
     hasMainMethod() {
         return false;
@@ -10353,6 +10405,9 @@ class Scene {
     /** get values that is visible in curr scope */
     getVisibleValue() {
         return this.visibleValue;
+    }
+    getOhPkgContentMap() {
+        return this.ohPkgContentMap;
     }
     makeCallGraphCHA(entryPoints) {
         let callGraphCHA;
@@ -10378,7 +10433,7 @@ class Scene {
      */
     inferTypes() {
         const typeInference = new TypeInference(this);
-        for (let arkFile of this.arkFiles) {
+        for (let arkFile of this.getFiles()) {
             for (let arkClass of arkFile.getClasses()) {
                 for (let arkMethod of arkClass.getMethods()) {
                     typeInference.inferTypeInMethod(arkMethod);
@@ -10390,7 +10445,7 @@ class Scene {
     }
     inferSimpleTypes() {
         const typeInference = new TypeInference(this);
-        for (let arkFile of this.arkFiles) {
+        for (let arkFile of this.getFiles()) {
             for (let arkClass of arkFile.getClasses()) {
                 for (let arkMethod of arkClass.getMethods()) {
                     typeInference.inferSimpleTypeInMethod(arkMethod);
@@ -10399,15 +10454,14 @@ class Scene {
         }
     }
     collectProjectImportInfos() {
-        this.arkFiles.forEach((arkFile) => {
+        this.getFiles().forEach((arkFile) => {
             arkFile.getImportInfos().forEach((importInfo) => {
                 this.globalImportInfos.push(importInfo);
             });
         });
     }
     genExtendedClasses() {
-        let allClasses = this.getAllClassesUnderTargetProject();
-        allClasses.forEach((cls) => {
+        this.getClassesMap().forEach((cls) => {
             let superClassName = cls.getSuperClassName();
             let superClass = null;
             superClass = ModelUtils.getClassWithNameFromClass(superClassName, cls);
@@ -10432,7 +10486,7 @@ class Scene {
     getClassMap() {
         var _a, _b;
         const classMap = new Map();
-        for (const file of this.arkFiles) {
+        for (const file of this.getFiles()) {
             const fileClass = [];
             const namespaceStack = [];
             const parentMap = new Map();
@@ -10490,7 +10544,7 @@ class Scene {
                 }
             }
         }
-        for (const file of this.arkFiles) {
+        for (const file of this.getFiles()) {
             // 文件加上import的class，包括ns的
             const importClasses = [];
             const importNameSpaces = [];
@@ -10501,8 +10555,14 @@ class Scene {
                 }
                 const importNameSpace = ModelUtils.getNamespaceInImportInfoWithName(importInfo.getImportClauseName(), file);
                 if (importNameSpace && !importNameSpaces.includes(importNameSpace)) {
-                    const importNameSpaceClasses = classMap.get(importNameSpace.getNamespaceSignature());
-                    importClasses.push(...importNameSpaceClasses.filter(c => !importClasses.includes(c) && c.getName() != '_DEFAULT_ARK_CLASS'));
+                    try {
+                        // 遗留问题：只统计了项目文件，没统计sdk文件内部的引入
+                        const importNameSpaceClasses = classMap.get(importNameSpace.getNamespaceSignature());
+                        importClasses.push(...importNameSpaceClasses.filter(c => !importClasses.includes(c) && c.getName() != '_DEFAULT_ARK_CLASS'));
+                    }
+                    catch (_c) {
+                        // console.log(importNameSpace)
+                    }
                 }
             }
             const fileClasses = classMap.get(file.getFileSignature());
@@ -10524,6 +10584,45 @@ class Scene {
             }
         }
         return classMap;
+    }
+    getGlobalVariableMap() {
+        const globalVariableMap = new Map();
+        for (const file of this.getFiles()) {
+            const globalLocals = [];
+            for (const local of file.getDefaultClass().getDefaultArkMethod().getBody().getLocals()) {
+                if (local.getName() != "this" && local.getName()[0] != "$") {
+                    globalLocals.push(local);
+                }
+            }
+            globalVariableMap.set(file.getFileSignature(), globalLocals);
+        }
+        for (const file of this.getFiles()) {
+            for (const ns of file.getNamespaces()) {
+                const globalLocals = [];
+                for (const local of ns.getDefaultClass().getDefaultArkMethod().getBody().getLocals()) {
+                    if (local.getName() != "this" && local.getName()[0] != "$") {
+                        globalLocals.push(local);
+                    }
+                }
+                globalLocals.push(...globalVariableMap.get(file.getFileSignature()));
+                globalVariableMap.set(ns.getNamespaceSignature(), globalLocals);
+            }
+            const namespaceStack = [...file.getNamespaces()];
+            while (namespaceStack.length > 0) {
+                const ns = namespaceStack.shift();
+                for (const nsns of ns.getNamespaces()) {
+                    const globalLocals = [];
+                    for (const local of nsns.getDefaultClass().getDefaultArkMethod().getBody().getLocals()) {
+                        if (local.getName() != "this" && local.getName()[0] != "$") {
+                            globalLocals.push(local);
+                        }
+                    }
+                    globalLocals.push(...globalVariableMap.get(ns.getNamespaceSignature()));
+                    globalVariableMap.set(ns.getNamespaceSignature(), globalLocals);
+                }
+            }
+        }
+        return globalVariableMap;
     }
 }
 
@@ -10817,7 +10916,7 @@ class DataflowSolver {
         const methodSignatures = this.CHA.resolveCall(this.problem.getEntryMethod().getSignature(), callNode);
         const methods = new Set();
         for (const methodSignature of methodSignatures) {
-            const method = ModelUtils.getMethodWithMethodSignature(methodSignature, this.scene);
+            const method = this.scene.getMethod(methodSignature);
             if (method) {
                 methods.add(method);
             }
@@ -11002,6 +11101,7 @@ class UndefinedVariableChecker extends DataflowProblem {
         this.entryMethod = method;
         this.scene = method.getDeclaringArkFile().getScene();
         this.classMap = this.scene.getClassMap();
+        this.globalVariableMap = this.scene.getGlobalVariableMap();
     }
     getEntryPoint() {
         return this.entryPoint;
@@ -11040,46 +11140,14 @@ class UndefinedVariableChecker extends DataflowProblem {
                             ret.add(new ArkStaticFieldRef(field.getSignature()));
                         }
                     }
-                    // const file = entryMethod.getDeclaringArkFile();
-                    // const classes = file.getClasses();
-                    // for (const importInfo of file.getImportInfos()){
-                    //     const importClass = ModelUtils.getClassWithName(importInfo.getImportClauseName(), entryMethod);
-                    //     if (importClass && !classes.includes(importClass)) {
-                    //         classes.push(importClass);
-                    //     }
-                    // }
-                    // const nameSpaces = file.getNamespaces();
-                    // for (const importInfo of file.getImportInfos()){
-                    //     const importNameSpace = ModelUtils.getClassWithName(importInfo.getImportClauseName(), entryMethod);
-                    //     if (importNameSpace && !classes.includes(importNameSpace)) {
-                    //         classes.push(importNameSpace);
-                    //     }
-                    // }
-                    // while (nameSpaces.length > 0) {
-                    //     const nameSpace = nameSpaces.pop()!;
-                    //     for (const exportInfo of nameSpace.getExportInfos()) {
-                    //         const clas = ModelUtils.getClassInNamespaceWithName(exportInfo.getExportClauseName(), nameSpace);
-                    //         if (clas && !classes.includes(clas)) {
-                    //             classes.push(clas);
-                    //             continue;
-                    //         }
-                    //         const ns = ModelUtils.getNamespaceInNamespaceWithName(exportInfo.getExportClauseName(), nameSpace);
-                    //         if (ns && !nameSpaces.includes(ns)) {
-                    //             nameSpaces.push(ns);
-                    //         }
-                    //     }
-                    // }
-                    // for (const arkClass of classes) {
-                    //     for (const field of arkClass.getFields()) {
-                    //         if (field.isStatic() && field.getInitializer() == undefined) {
-                    //             ret.add(new ArkStaticFieldRef(field.getSignature()));
-                    //         }
-                    //     }
-                    // }
+                    for (const local of entryMethod.getDeclaringArkClass().getGlobalVariable(checkerInstance.globalVariableMap)) {
+                        ret.add(local);
+                    }
                     return ret;
                 }
                 if (!factEqual(srcStmt.getDef(), dataFact)) {
-                    ret.add(dataFact);
+                    if (!(dataFact instanceof Local && dataFact.getName() == srcStmt.getDef().toString()))
+                        ret.add(dataFact);
                 }
                 if (srcStmt instanceof ArkAssignStmt) {
                     let ass = srcStmt;
@@ -11095,7 +11163,7 @@ class UndefinedVariableChecker extends DataflowProblem {
                     }
                     else if (rightOp instanceof ArkInstanceFieldRef) {
                         const base = rightOp.getBase();
-                        if (base == dataFact) {
+                        if (base == dataFact || !base.getDeclaringStmt()) {
                             console.log("undefined base");
                             console.log(srcStmt.toString());
                             console.log(srcStmt.getOriginPositionInfo());
@@ -11123,6 +11191,9 @@ class UndefinedVariableChecker extends DataflowProblem {
                             ret.add(new ArkStaticFieldRef(field.getSignature()));
                         }
                     }
+                    for (const local of method.getDeclaringArkClass().getGlobalVariable(checkerInstance.globalVariableMap)) {
+                        ret.add(local);
+                    }
                 }
                 else {
                     const callExpr = srcStmt.getExprs()[0];
@@ -11130,7 +11201,7 @@ class UndefinedVariableChecker extends DataflowProblem {
                         // todo:base转this
                         const baseType = callExpr.getBase().getType();
                         const arkClass = checkerInstance.scene.getClass(baseType.getClassSignature());
-                        const constructor = ModelUtils.getMethodInClassWithName("constructor", arkClass);
+                        const constructor = arkClass === null || arkClass === void 0 ? void 0 : arkClass.getMethodWithName("constructor");
                         const block = [...constructor.getCfg().getBlocks()][0];
                         for (const stmt of block.getStmts()) {
                             const def = stmt.getDef();
@@ -11230,7 +11301,7 @@ class UndefinedVariableSolver extends DataflowSolver {
     }
 }
 
-const logger = ConsoleLogger.getLogger();
+const logger$2 = ConsoleLogger.getLogger();
 /**
  * 从指定目录中提取指定后缀名的所有文件
  * @param srcPath string 要提取文件的项目入口，相对或绝对路径都可
@@ -11241,13 +11312,16 @@ const logger = ConsoleLogger.getLogger();
 function getAllFiles(srcPath, exts, filenameArr = []) {
     // 如果源目录不存在，直接结束程序
     if (!fs__default.existsSync(srcPath)) {
-        logger.error(`Input directory is not exist, please check!`);
+        logger$2.error(`Input directory is not exist, please check!`);
         return filenameArr;
     }
     // 获取src的绝对路径
     const realSrc = fs__default.realpathSync(srcPath);
     // 遍历src，判断文件类型
     fs__default.readdirSync(realSrc).forEach(filename => {
+        if (filename == 'oh_modules' || filename == 'node_modules') {
+            return;
+        }
         // 拼接文件的绝对路径
         const realFile = path.resolve(realSrc, filename);
         //TODO: 增加排除文件后缀和目录
@@ -11264,256 +11338,6 @@ function getAllFiles(srcPath, exts, filenameArr = []) {
     });
     return filenameArr;
 }
-
-function isPrimaryType(type) {
-    switch (type) {
-        case "boolean":
-        case "number":
-        case "string":
-        case "String":
-        case "void":
-        case "any":
-        case "null":
-        case "undefined":
-            return true;
-        default:
-            return false;
-    }
-}
-function isPrimaryTypeKeyword(keyword) {
-    switch (keyword) {
-        case "NumberKeyword":
-        case "StringKeyword":
-        case "String":
-        case "NullKeyword":
-        case "BooleanKeyword":
-            return true;
-        default:
-            return false;
-    }
-}
-function resolvePrimaryTypeKeyword(keyword) {
-    switch (keyword) {
-        case "NumberKeyword":
-            return "number";
-        case "StringKeyword":
-            return "string";
-        case "NullKeyword":
-            return "null";
-        case "String":
-            return "String";
-        case "BooleanKeyword":
-            return "boolean";
-        default:
-            return "";
-    }
-}
-function splitType(typeName, separator) {
-    return typeName.split(separator).map(type => type.trim()).filter(Boolean);
-}
-function transformArrayToString(array, separator = '|') {
-    return array.join(separator);
-}
-function buildTypeReferenceString(astNodes) {
-    return astNodes.map(node => {
-        if (node.kind === 'Identifier') {
-            return node.text;
-        }
-        else if (node.kind === 'DotToken') {
-            return '.';
-        }
-        return '';
-    }).join('');
-}
-function resolveBinaryResultType(op1Type, op2Type, operator) {
-    switch (operator) {
-        case "+":
-            if (op1Type instanceof StringType || op2Type instanceof StringType) {
-                return StringType.getInstance();
-            }
-            if (op1Type instanceof NumberType && op2Type instanceof NumberType) {
-                return NumberType.getInstance();
-            }
-            break;
-        case "-":
-        case "*":
-        case "/":
-        case "%":
-            if (op1Type instanceof NumberType && op2Type instanceof NumberType) {
-                return NumberType.getInstance();
-            }
-            break;
-        case "<":
-        case "<=":
-        case ">":
-        case ">=":
-        case "==":
-        case "!=":
-        case "===":
-        case "!==":
-        case "&&":
-        case "||":
-            return BooleanType.getInstance();
-        case "&":
-        case "|":
-        case "^":
-        case "<<":
-        case ">>":
-        case ">>>":
-            if (op1Type instanceof NumberType && op2Type instanceof NumberType) {
-                return NumberType.getInstance();
-            }
-            break;
-    }
-    return null;
-}
-function getArkFileByName(fileName, scene) {
-    for (let sceneFile of scene.arkFiles) {
-        if (sceneFile.getName() === fileName) {
-            return sceneFile;
-        }
-    }
-    return null;
-}
-function resolveClassInstance(classCompleteName, file) {
-    if (file == null)
-        return null;
-    let lastDotIndex = classCompleteName.lastIndexOf('.');
-    let classRealName = classCompleteName.substring(lastDotIndex + 1);
-    for (let arkClass of file.getClasses()) {
-        if (arkClass.getName() === classRealName) {
-            return arkClass;
-        }
-    }
-    return null;
-}
-function resolveNameSpace(nameSpaceNameArray, file) {
-    if (file == null)
-        return null;
-    let nameSpaceInstance = null;
-    for (let i = 0; i < nameSpaceNameArray.length - 1; i++) {
-        let nameSpaceName = nameSpaceNameArray[i];
-        let nameSpaceSignature = searchImportMessage(file, nameSpaceName, matchNameSpaceInFile);
-        // TODO: ArkNameSpace.getName()是全局唯一吗? 有没有全局找ArkNameSpace的实例的方法?
-        if (nameSpaceInstance === null) {
-            let nameSpaceList = file.getScene().getAllNamespacesUnderTargetProject();
-            for (let nameSpace of nameSpaceList) {
-                if (nameSpace.getNamespaceSignature().toString() === nameSpaceSignature) {
-                    nameSpaceInstance = nameSpace;
-                }
-            }
-        }
-        else {
-            let subNameSpace = nameSpaceInstance.getNamespaces();
-            let checkNameSpace = false;
-            for (let nameSpace of subNameSpace) {
-                if (nameSpaceName === nameSpace.getName()) {
-                    nameSpaceInstance = nameSpace;
-                    checkNameSpace = true;
-                    break;
-                }
-            }
-            if (!checkNameSpace) {
-                return null;
-            }
-        }
-    }
-    return nameSpaceInstance;
-}
-function resolveClassInstanceField(fieldName, file) {
-    if (file == null)
-        return null;
-    for (let i = 0; i < fieldName.length - 1; i++) {
-        let className = fieldName[i];
-        let classInstanceName = searchImportMessage(file, className, matchClassInFile);
-        let lastDotIndex = classInstanceName.lastIndexOf('.');
-        let classInstanceArkFile = getArkFileByName(classInstanceName.substring(0, lastDotIndex), file.getScene());
-        let classInstance = resolveClassInstance(classInstanceName, classInstanceArkFile);
-        if (classInstance == null) {
-            return null;
-        }
-        for (let field of classInstance.getFields()) {
-            if (field.getName() === fieldName[i + 1]) {
-                fieldName[i + 1] = field.getType().toString();
-                file = classInstance.getDeclaringArkFile();
-                break;
-            }
-        }
-    }
-    return searchImportMessage(file, fieldName[fieldName.length - 1], matchClassInFile);
-}
-function searchImportMessage(file, className, searchCallback) {
-    // 调用回调函数作为递归结束条件
-    const result = searchCallback(file, className);
-    if (result) {
-        return result;
-    }
-    for (let importInfo of file.getImportInfos()) {
-        const importFromDir = importInfo.getImportFrom();
-        if (className == importInfo.getImportClauseName() && importFromDir != undefined) {
-            const fileDir = file.getName().split("\\");
-            const importDir = importFromDir.split(/[\/\\]/).filter(item => item !== '.');
-            let realName = importInfo.getNameBeforeAs() ? importInfo.getNameBeforeAs() : importInfo.getImportClauseName();
-            let parentDirNum = 0;
-            while (importDir[parentDirNum] == "..") {
-                parentDirNum++;
-            }
-            if (parentDirNum < fileDir.length) {
-                let realImportFileName = path.dirname("");
-                for (let i = 0; i < fileDir.length - parentDirNum - 1; i++) {
-                    realImportFileName = path.join(realImportFileName, fileDir[i]);
-                }
-                for (let i = parentDirNum; i < importDir.length; i++) {
-                    realImportFileName = path.join(realImportFileName, importDir[i]);
-                }
-                realImportFileName += ".ts";
-                const scene = file.getScene();
-                if (scene) {
-                    for (let sceneFile of scene.arkFiles) {
-                        if (sceneFile.getName() == realImportFileName) {
-                            return searchImportMessage(sceneFile, realName, searchCallback);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    return "";
-}
-function typeStrToClassSignature(typeStr) {
-    const lastDot = typeStr.lastIndexOf('.');
-    const classSignature = new ClassSignature();
-    const fileSignature = new FileSignature();
-    fileSignature.setFileName(typeStr.substring(0, lastDot));
-    classSignature.setDeclaringFileSignature(fileSignature);
-    const classType = typeStr.replace(/\\\\/g, '.').split('.');
-    classSignature.setClassName(classType[classType.length - 1]);
-    return classSignature;
-}
-const matchNameSpaceInFile = (file, nameSpaceName) => {
-    for (let nameSpaceInFile of file.getNamespaces()) {
-        if (nameSpaceName === nameSpaceInFile.getName()) {
-            return nameSpaceInFile.getNamespaceSignature().toString();
-        }
-    }
-    return null;
-};
-const matchClassInFile = (file, className) => {
-    for (let classInFile of file.getClasses()) {
-        if (className === classInFile.getName()) {
-            return classInFile.getSignature().getDeclaringFileSignature().getFileName() + "." + className;
-        }
-    }
-    return null;
-};
-const matchFunctionInFile = (file, functionName) => {
-    for (let functionOfFile of file.getDefaultClass().getMethods()) {
-        if (functionName == functionOfFile.getName()) {
-            return functionOfFile.getSignature().toString();
-        }
-    }
-    return null;
-};
 
 class StaticSingleAssignmentFormer {
     transformBody(body) {
@@ -11752,5 +11576,1304 @@ class StaticSingleAssignmentFormer {
     }
 }
 
-export { ASTree, AbstractCallGraph, AbstractExpr, AbstractFieldRef, AbstractInvokeExpr, AbstractRef, AliasType, AnnotationNamespaceType, AnnotationType, AnnotationTypeQueryType, AnyType, ArkArrayRef, ArkAssignStmt, ArkBinopExpr, ArkBody, ArkCastExpr, ArkCaughtExceptionRef, ArkClass, ArkConditionExpr, ArkDeleteStmt, ArkField, ArkFile, ArkGotoStmt, ArkIfStmt, ArkInstanceFieldRef, ArkInstanceInvokeExpr, ArkInstanceOfExpr, ArkInvokeStmt, ArkLengthExpr, ArkMethod, ArkNamespace, ArkNewArrayExpr, ArkNewExpr, ArkNopStmt, ArkParameterRef, ArkPhiExpr, ArkReturnStmt, ArkReturnVoidStmt, ArkStaticFieldRef, ArkStaticInvokeExpr, ArkSwitchStmt, ArkThisRef, ArkThrowStmt, ArkTypeOfExpr, ArkUnopExpr, ArrayBindingPatternParameter, ArrayLiteralExpr, ArrayObjectType, ArrayType, BUILDIN_CONTAINER_COMPONENT, BasicBlock, BodyBuilder, BooleanType, CallableType, Cfg, CfgBuilder, ClassAliasType, ClassHierarchyAnalysisAlgorithm, ClassInfo, ClassSignature, ClassType, Config, Constant, DataflowProblem, DataflowResult, DataflowSolver, DefUseChain$1 as DefUseChain, DominanceFinder, DominanceTree, Edge, ExportInfo, ExprUseReplacer, Fact, FieldSignature, FileSignature, IRUtils, ImportInfo, InterfaceSignature, LOG_LEVEL, LineColPosition, LinePosition, LiteralType, Local, MethodInfo, MethodParameter, MethodSignature, MethodSignatureManager, MethodSubSignature, ModelUtils, NamespaceInfo, NamespaceSignature, NeverType, NodeA, NullType, NumberType, ObjectBindingPatternParameter, ObjectLiteralExpr, PathEdge, PathEdgePoint, Position, PrimitiveType, RapidTypeAnalysisAlgorithm, RefUseReplacer, Scene, SceneConfig, SceneManager, Scope, StaticSingleAssignmentFormer, Stmt, StmtUseReplacer, StringType, TupleType, Type, TypeInference, TypeLiteralType, UnclearReferenceType, UndefinedType, UndefinedVariableChecker, UndefinedVariableSolver, UnionType, UnknownType, ValueTag, ValueUtil, VariablePointerAnalysisAlogorithm, ViewTree, ViewTreeNode, VisibleValue, VoidType, arkMethodNodeKind, buildArkFileFromFile, buildArkMethodFromArkClass, buildArkNamespace, buildClassInfo4ClassNode, buildDefaultArkClassFromArkFile, buildDefaultArkClassFromArkNamespace, buildExportInfo4ExportNode, buildGetAccessor2ArkField, buildHeritageClauses, buildImportInfo4ImportNode, buildIndexSignature2ArkField, buildMethodInfo4MethodNode, buildModifiers, buildNamespaceInfo4NamespaceNode, buildNormalArkClassFromArkFile, buildNormalArkClassFromArkNamespace, buildNormalArkMethodFromAstNode, buildNormalArkMethodFromMethodInfo, buildParameters, buildProperty2ArkField, buildReturnType4Method, buildTypeFromPreStr, buildTypeParameters, buildTypeReferenceString, classSignatureCompare, extractLastBracketContent, factEqual, fieldSignatureCompare, fileSignatureCompare, genSignature4ImportClause, getAllFiles, getArkFileByName, handlePropertyAccessExpression, handleQualifiedName, isItemRegistered, isPrimaryType, isPrimaryTypeKeyword, matchClassInFile, matchFunctionInFile, matchNameSpaceInFile, methodSignatureCompare, methodSubSignatureCompare, notStmtOrExprKind, printCallGraphDetails, resolveBinaryResultType, resolveClassInstance, resolveClassInstanceField, resolveNameSpace, resolvePrimaryTypeKeyword, searchImportMessage, splitStringWithRegex, splitType, transfer2UnixPath, transformArrayToString, typeStrToClassSignature, updateSdkConfigPrefix };
+class ArkCodeBuffer {
+    constructor(indent = '') {
+        this.output = [];
+        this.indent = '';
+        this.indent = indent;
+    }
+    write(s) {
+        this.output.push(s);
+        return this;
+    }
+    writeLine(s) {
+        this.write(s);
+        this.write('\n');
+        return this;
+    }
+    writeSpace(s) {
+        if (s.length == 0) {
+            return this;
+        }
+        this.write(s);
+        this.write(' ');
+        return this;
+    }
+    writeStringLiteral(s) {
+        this.write(`'${s}'`);
+        return this;
+    }
+    writeIndent() {
+        this.write(this.indent);
+        return this;
+    }
+    incIndent() {
+        this.indent += '  ';
+        return this;
+    }
+    decIndent() {
+        if (this.indent.length >= 2) {
+            this.indent = this.indent.substring(0, this.indent.length - 2);
+        }
+        return this;
+    }
+    getIndent() {
+        return this.indent;
+    }
+    toString() {
+        return this.output.join('');
+    }
+}
+class ArkStream extends ArkCodeBuffer {
+    constructor(streamOut) {
+        super('');
+        this.streamOut = streamOut;
+    }
+    write(s) {
+        this.streamOut.write(s);
+        return this;
+    }
+    close() {
+        this.streamOut.close();
+    }
+}
+
+class Printer {
+    constructor(arkFile) {
+        this.arkFile = arkFile;
+    }
+}
+
+class DotPrinter extends Printer {
+    printTo(streamOut) {
+        streamOut.writeLine(`digraph "${this.arkFile.getName()}" {`);
+        streamOut.incIndent();
+        // print namespace
+        for (let ns of this.arkFile.getNamespaces()) {
+            this.printNamespace(ns, streamOut);
+        }
+        // print class 
+        for (let cls of this.arkFile.getClasses()) {
+            this.printClass(cls, streamOut);
+        }
+        streamOut.decIndent();
+        streamOut.writeLine('}');
+    }
+    printNamespace(ns, streamOut) {
+        // print class 
+        for (let cls of ns.getClasses()) {
+            this.printClass(cls, streamOut);
+        }
+        // print namespace
+        for (let childNs of ns.getNamespaces()) {
+            this.printNamespace(childNs, streamOut);
+        }
+    }
+    printClass(cls, streamOut) {
+        for (let method of cls.getMethods()) {
+            this.printMethod3ACBlocks(method, streamOut);
+            this.printMethodOriginalBlocks(method, streamOut);
+        }
+    }
+    printMethod3ACBlocks(method, streamOut) {
+        streamOut.writeIndent().writeLine(`subgraph "cluster_${method.getSignature()}" {`);
+        streamOut.incIndent();
+        streamOut.writeIndent().writeLine(`label="${method.getSignature()}";`);
+        let blocks = method.getBody().getCfg().getBlocks();
+        let prefix = `Node${this.stringHashCode(method.getSignature().toString())}`;
+        this.printBlocks(blocks, prefix, streamOut);
+        streamOut.decIndent();
+        streamOut.writeIndent().writeLine('}');
+    }
+    printMethodOriginalBlocks(method, streamOut) {
+        streamOut.writeIndent().writeLine(`subgraph "cluster_Original_${method.getSignature()}" {`);
+        streamOut.incIndent();
+        streamOut.writeIndent().writeLine(`label="${method.getSignature()}_original";`);
+        let blocks = method.getBody().getOriginalCfg().getBlocks();
+        let prefix = `NodeOriginal${this.stringHashCode(method.getSignature().toString())}`;
+        this.printBlocks(blocks, prefix, streamOut);
+        streamOut.decIndent();
+        streamOut.writeIndent().writeLine('}');
+    }
+    printBlocks(blocks, prefix, streamOut) {
+        let blockToNode = new Map();
+        let index = 0;
+        for (let block of blocks) {
+            let name = prefix + index++;
+            blockToNode.set(block, name);
+            // Node0 [label="entry"];
+            streamOut.writeIndent().writeLine(`${name} [label="${this.getBlockContent(block, streamOut.getIndent())}"];`);
+        }
+        for (let block of blocks) {
+            for (let nextBlock of block.getSuccessors()) {
+                // Node0 -> Node1;
+                streamOut.writeIndent().writeLine(`${blockToNode.get(block)} -> ${blockToNode.get(nextBlock)};`);
+            }
+        }
+    }
+    stringHashCode(name) {
+        let hashCode = 0;
+        for (let i = 0; i < name.length; i++) {
+            hashCode += name.charCodeAt(i);
+        }
+        return Math.abs(hashCode);
+    }
+    getBlockContent(block, indent) {
+        let content = [];
+        for (let stmt of block.getStmts()) {
+            content.push(stmt.toString().replace(/"/g, '\\"'));
+        }
+        return content.join('\n    ' + indent);
+    }
+}
+
+class SourceBase {
+    constructor(indent, arkFile) {
+        this.printer = new ArkCodeBuffer(indent);
+        this.arkFile = arkFile;
+    }
+    modifiersToString(modifiers) {
+        let modifiersStr = [];
+        modifiers.forEach((value) => {
+            modifiersStr.push(this.resolveKeywordType(value));
+        });
+        return modifiersStr.join(' ');
+    }
+    resolveKeywordType(keywordStr) {
+        // 'NumberKeyword | NullKeyword |
+        let types = [];
+        for (let keyword of keywordStr.split('|')) {
+            keyword = keyword.trim();
+            if (keyword.length == 0) {
+                continue;
+            }
+            if (keyword.endsWith('Keyword')) {
+                keyword = keyword.substring(0, keyword.length - 'Keyword'.length).toLowerCase();
+            }
+            types.push(keyword);
+        }
+        return types.join('|');
+    }
+    resolveMethodName(name) {
+        if (name === '_Constructor') {
+            return 'constructor';
+        }
+        if (name.startsWith('Get-')) {
+            return name.replace('Get-', 'get ');
+        }
+        if (name.startsWith('Set-')) {
+            return name.replace('Set-', 'set ');
+        }
+        return name;
+    }
+}
+
+class SourceUtils {
+    static typeToString(type) {
+        if (type instanceof TypeLiteralType) {
+            let typesStr = [];
+            for (const member of type.getMembers()) {
+                typesStr.push(member.getName() + ':' + member.getType());
+            }
+            return `{${typesStr.join(',')}}`;
+        }
+        else if (type instanceof Array) {
+            let typesStr = [];
+            for (const member of type) {
+                typesStr.push(this.typeToString(member));
+            }
+            return typesStr.join(' | ');
+        }
+        else if (type instanceof LiteralType) {
+            let literalName = type.getliteralName();
+            return literalName.substring(0, literalName.length - 'Keyword'.length).toLowerCase();
+        }
+        else if (type instanceof UnknownType) {
+            return 'any';
+        }
+        else if (type instanceof ClassType) {
+            return type.getClassSignature().getClassName();
+        }
+        else if (type instanceof ArrayType) {
+            if (type.getBaseType() instanceof UnknownType) {
+                const strs = [];
+                strs.push('(any)');
+                for (let i = 0; i < type.getDimension(); i++) {
+                    strs.push('[]');
+                }
+                return strs.join('');
+            }
+            else {
+                return type.toString();
+            }
+        }
+        else if (!type) {
+            return 'any';
+        }
+        else {
+            return type.toString();
+        }
+    }
+    static typeArrayToString(types, split = ',') {
+        let typesStr = [];
+        types.forEach((t) => {
+            typesStr.push(SourceUtils.typeToString(t));
+        });
+        return typesStr.join(split);
+    }
+}
+
+const logger$1 = ConsoleLogger.getLogger();
+class SourceStmt extends Stmt {
+    constructor(original, stmtReader, method) {
+        super();
+        this.original = original;
+        this.method = method;
+        this.setPositionInfo(original.getPositionInfo());
+        this.transfer2ts(stmtReader);
+    }
+    instanceInvokeExprToString(invokeExpr) {
+        let methodName = invokeExpr.getMethodSignature().getMethodSubSignature().getMethodName();
+        let args = [];
+        invokeExpr.getArgs().forEach((v) => { args.push(this.transferValueToString(v)); });
+        if (invokeExpr.getBase() instanceof Local) {
+            return `${invokeExpr.getBase().getName()}.${methodName}(${args.join(',')})`;
+        }
+        else if (invokeExpr.getBase() instanceof Constant) {
+            let base = invokeExpr.getBase();
+            return `${base.getValue()}.${methodName}(${args.join(',')})`;
+        }
+        else {
+            logger$1.info('= SourceStmt.instanceInvokeExprToString: error.', invokeExpr.getBase(), methodName);
+        }
+    }
+    staticInvokeExprToString(invokeExpr) {
+        let methodName = invokeExpr.getMethodSignature().getMethodSubSignature().getMethodName();
+        let args = [];
+        invokeExpr.getArgs().forEach((v) => { args.push(v.toString()); });
+        return `${methodName}(${args.join(',')})`;
+    }
+    transferValueToString(value) {
+        if (value instanceof ArkInstanceFieldRef) {
+            if (value.getBase() instanceof Constant) {
+                return `${value.getBase().getValue()}.${value.getFieldName()}`;
+            }
+            return `${value.getBase().getName()}.${value.getFieldName()}`;
+        }
+        if (value instanceof ArkBinopExpr) {
+            let binopExpr = new SourceBinopExpr(value);
+            return `${binopExpr}`;
+        }
+        if (value instanceof ArkNewArrayExpr) {
+            return `new Array<${SourceUtils.typeToString(value.getBaseType())}>(${value.getSize()})`;
+        }
+        if (value instanceof ArkInstanceInvokeExpr) {
+            return `${this.instanceInvokeExprToString(value)}`;
+        }
+        if (value instanceof ArkStaticInvokeExpr) {
+            return `${this.staticInvokeExprToString(value)}`;
+        }
+        if (value instanceof ArkLengthExpr) {
+            return `${value.getOp()}.length`;
+        }
+        if (value instanceof Local) {
+            if (value.getName().startsWith('AnonymousFunc$_')) {
+                for (const anonymousMethod of this.method.getDeclaringArkClass().getMethods()) {
+                    if (anonymousMethod.getName() == value.getName()) {
+                        let _anonymous = new SourceMethod('', this.method.getDeclaringArkFile(), anonymousMethod);
+                        return _anonymous.dump();
+                    }
+                }
+            }
+        }
+        return `${value}`;
+    }
+}
+class SourceAssignStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        let leftOp = this.original.getLeftOp();
+        let rightOp = this.original.getRightOp();
+        logger$1.info('SourceAssignStmt->transfer2ts', leftOp, rightOp);
+        // omit this = this: <tests\sample\sample.ts>.<_DEFAULT_ARK_CLASS>
+        if (leftOp instanceof Local && leftOp.getName() == 'this') {
+            this.setText('');
+            return;
+        }
+        // name = parameter0: StringKeyword
+        if (rightOp instanceof ArkParameterRef) {
+            this.setText('');
+            return;
+        }
+        // temp1 = new Person
+        // temp1.constructor(10)
+        if (leftOp instanceof Local && rightOp instanceof ArkNewExpr) {
+            if (stmtReader.hasNext()) {
+                let stmt = stmtReader.next();
+                let rollback = true;
+                if (stmt instanceof ArkInvokeStmt && stmt.getInvokeExpr()) {
+                    let instanceInvokeExpr = stmt.getInvokeExpr();
+                    if ('constructor' == instanceInvokeExpr.getMethodSignature().getMethodSubSignature().getMethodName() && instanceInvokeExpr.getBase().getName() == leftOp.getName()) {
+                        let args = [];
+                        instanceInvokeExpr.getArgs().forEach((v) => { args.push(v.toString()); });
+                        this.setText(`${this.transferValueToString(leftOp)} = new ${SourceUtils.typeToString(rightOp.getType())}(${args.join(',')});`);
+                        rollback = false;
+                    }
+                }
+                if (rollback) {
+                    stmtReader.rollback();
+                    this.setText(`${this.transferValueToString(leftOp)} = new ${SourceUtils.typeToString(rightOp.getType())}();`);
+                }
+            }
+            else {
+                this.setText(`${this.transferValueToString(leftOp)} = new ${SourceUtils.typeToString(rightOp.getType())}();`);
+            }
+            return;
+        }
+        this.setText(`${this.transferValueToString(leftOp)} = ${this.transferValueToString(rightOp)};`);
+    }
+}
+class SourceInvokeStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        let invokeExpr = this.original.getInvokeExpr();
+        if (invokeExpr instanceof ArkStaticInvokeExpr) {
+            this.setText(`${this.staticInvokeExprToString(invokeExpr)};`);
+            return;
+        }
+        else if (invokeExpr instanceof ArkInstanceInvokeExpr) {
+            this.setText(`${this.instanceInvokeExprToString(invokeExpr)};`);
+            return;
+        }
+        else {
+            this.setText(this.original + ';');
+        }
+    }
+}
+class SourceIfStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        let code;
+        code = `if (${this.original.getConditionExprExpr().getOp1()}`;
+        code += ` ${this.original.getConditionExprExpr().getOperator()} `;
+        code += `${this.original.getConditionExprExpr().getOp2()}) {`;
+        this.setText(code);
+    }
+}
+class SourceWhileStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        let code;
+        code = `while (${this.original.getConditionExprExpr().getOp1()}`;
+        code += ` ${this.transferOperator()} `;
+        code += `${this.original.getConditionExprExpr().getOp2()}) {`;
+        this.setText(code);
+    }
+    transferOperator() {
+        let operator = this.original.getConditionExprExpr().getOperator().trim();
+        if (this.isRelationalOperator(operator)) {
+            return this.flipOperator(operator);
+        }
+        return operator;
+    }
+    isRelationalOperator(operator) {
+        return operator == '<' || operator == '<=' || operator == '>' || operator == '>=' ||
+            operator == '==' || operator == '===' || operator == '!=' || operator == '!==';
+    }
+    flipOperator(operator) {
+        let newOperater = '';
+        switch (operator) {
+            case '<':
+                newOperater = '>=';
+                break;
+            case '<=':
+                newOperater = '>';
+                break;
+            case '>':
+                newOperater = '<=';
+                break;
+            case '>=':
+                newOperater = '<';
+                break;
+            case '==':
+                newOperater = '!=';
+                break;
+            case '===':
+                newOperater = '!==';
+                break;
+            case '!=':
+                newOperater = '==';
+                break;
+            case '!==':
+                newOperater = '===';
+                break;
+        }
+        return newOperater;
+    }
+}
+class SourceForStmt extends SourceWhileStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        let code;
+        code = `for (; ${this.original.getConditionExprExpr().getOp1()}`;
+        code += ` ${this.transferOperator()} `;
+        code += `${this.original.getConditionExprExpr().getOp2()}; `;
+        while (stmtReader.hasNext()) {
+            code += `${stmtReader.next()}`;
+            if (stmtReader.hasNext()) {
+                code += ', ';
+            }
+        }
+        code += `) {`;
+        this.setText(code);
+        logger$1.info('SourceForStmt->transfer2ts:', this.original.getConditionExprExpr());
+    }
+}
+class SourceElseStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        this.setText('} else {');
+    }
+}
+class SourceContinueStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    // trans 2 break or continue
+    transfer2ts(stmtReader) {
+        this.setText('continue;');
+    }
+}
+class SourceBreakStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    // trans 2 break or continue
+    transfer2ts(stmtReader) {
+        this.setText('break;');
+    }
+}
+class SourceReturnStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        this.setText(`return ${this.original.getOp()};`);
+    }
+}
+class SourceReturnVoidStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        if (this.original.getOriginPositionInfo() == 0) {
+            this.setText('');
+        }
+        else {
+            this.setText('return;');
+        }
+    }
+}
+class SourceSwitchStmt extends SourceStmt {
+    constructor(original, stmtReader, method) {
+        super(original, stmtReader, method);
+    }
+    transfer2ts(stmtReader) {
+        this.setText(`switch (${this.original.getKey()}) {`);
+    }
+}
+class SourceCaseStmt extends SourceStmt {
+    constructor(original, stmtReader, method, index) {
+        super(original, stmtReader, method);
+        this.caseIndex = index;
+        this.transfer2ts(stmtReader);
+    }
+    isDefault() {
+        let cases = this.original.getCases();
+        return this.caseIndex >= cases.length;
+    }
+    transfer2ts(stmtReader) {
+        let cases = this.original.getCases();
+        if (this.caseIndex < cases.length) {
+            this.setText(`case ${this.original.getCases()[this.caseIndex]}:`);
+        }
+        else {
+            this.setText('default: ');
+        }
+    }
+}
+class SourceCompoundEndStmt extends Stmt {
+    constructor(text) {
+        super();
+        this.setText(text);
+    }
+}
+class SourceBinopExpr {
+    constructor(binopExpr) {
+        this.binopExpr = binopExpr;
+    }
+    toString() {
+        let op1 = this.binopExpr.getOp1();
+        let op2 = this.binopExpr.getOp2();
+        let operator = this.binopExpr.getOperator();
+        return this.opToString(op1) + ' ' + operator + ' ' + this.opToString(op2);
+    }
+    opToString(op) {
+        let outStr = '';
+        if (op instanceof Constant) {
+            if (op.getType() == 'string' && !op.getValue().startsWith('\'')) {
+                outStr = `'${op.getValue()}'`;
+            }
+            else {
+                outStr = op.getValue();
+            }
+        }
+        else if (op instanceof ArkInstanceFieldRef) {
+            outStr = op.getBase().getName() + '.' + op.getFieldName();
+        }
+        else {
+            outStr += op;
+        }
+        return outStr;
+    }
+}
+
+const logger = ConsoleLogger.getLogger();
+var BlockType;
+(function (BlockType) {
+    BlockType[BlockType["NORMAL"] = 0] = "NORMAL";
+    BlockType[BlockType["WHILE"] = 1] = "WHILE";
+    BlockType[BlockType["FOR"] = 2] = "FOR";
+    BlockType[BlockType["CONTINUE"] = 3] = "CONTINUE";
+    BlockType[BlockType["BREAK"] = 4] = "BREAK";
+    BlockType[BlockType["IF"] = 5] = "IF";
+    BlockType[BlockType["IF_ELSE"] = 6] = "IF_ELSE";
+})(BlockType || (BlockType = {}));
+class SourceBody {
+    constructor(indent, method) {
+        this.stmts = [];
+        this.printer = new ArkCodeBuffer(indent);
+        this.method = method;
+        this.arkBody = method.getBody();
+        this.identifyBlocks();
+        this.buildSourceStmt();
+    }
+    dump() {
+        this.printLocals();
+        this.printStmts();
+        return this.printer.toString();
+    }
+    identifyBlocks() {
+        let blocks = this.arkBody.getCfg().getBlocks();
+        let visitor = new Set();
+        this.blockTypes = new Map();
+        this.loopPath = new Map;
+        for (const block of blocks) {
+            if (visitor.has(block)) {
+                continue;
+            }
+            visitor.add(block);
+            if (this.isIfStmtBB(block) && this.isLoopBB(block, visitor)) {
+                let stmts = block.getStmts();
+                // IfStmt is at the end then it's a while loop
+                if (stmts[stmts.length - 1] instanceof ArkIfStmt) {
+                    this.blockTypes.set(block, BlockType.WHILE);
+                }
+                else {
+                    this.blockTypes.set(block, BlockType.FOR);
+                }
+            }
+            else if (this.isIfStmtBB(block)) {
+                if (this.isIfElseBB(block)) {
+                    this.blockTypes.set(block, BlockType.IF_ELSE);
+                }
+                else {
+                    this.blockTypes.set(block, BlockType.IF);
+                }
+            }
+            else if (this.isGotoStmtBB(block)) {
+                if (this.isContinueBB(block, this.blockTypes)) {
+                    this.blockTypes.set(block, BlockType.CONTINUE);
+                }
+                else {
+                    this.blockTypes.set(block, BlockType.BREAK);
+                }
+            }
+            else {
+                this.blockTypes.set(block, BlockType.NORMAL);
+            }
+        }
+    }
+    isIfStmtBB(block) {
+        let stmtReader = new StmtReader(block.getStmts());
+        while (stmtReader.hasNext()) {
+            let stmt = stmtReader.next();
+            if (stmt instanceof ArkIfStmt) {
+                return true;
+            }
+        }
+        return false;
+    }
+    isLoopBB(block, visitor) {
+        let onPath = new Set();
+        let loop = false;
+        visitor.delete(block);
+        if (block.getSuccessors().length == 0) {
+            return loop;
+        }
+        let next = block.getSuccessors()[0];
+        onPath.add(next);
+        dfs(next);
+        visitor.add(block);
+        if (loop) {
+            this.loopPath.set(block, onPath);
+        }
+        return loop;
+        function dfs(_block) {
+            if (_block === block) {
+                loop = true;
+                return;
+            }
+            for (const sub of _block.getSuccessors()) {
+                if (!visitor.has(sub) && !onPath.has(sub) && sub != block.getSuccessors()[1]) {
+                    onPath.add(sub);
+                    dfs(sub);
+                }
+            }
+        }
+    }
+    isGotoStmtBB(block) {
+        let stmtReader = new StmtReader(block.getStmts());
+        while (stmtReader.hasNext()) {
+            let stmt = stmtReader.next();
+            if (stmt instanceof ArkGotoStmt) {
+                return true;
+            }
+        }
+        return false;
+    }
+    isContinueBB(block, blockTypes) {
+        let type = blockTypes.get(block.getSuccessors()[0]);
+        let toLoop = false;
+        if (type == BlockType.FOR || type == BlockType.WHILE) {
+            toLoop = true;
+        }
+        if (!toLoop) {
+            return false;
+        }
+        let parentLoop = block;
+        let minSize = this.arkBody.getCfg().getBlocks().size;
+        for (let [key, value] of this.loopPath) {
+            if (value.has(block) && value.size < minSize) {
+                minSize = value.size;
+                parentLoop = key;
+            }
+        }
+        if (parentLoop == block.getSuccessors()[0]) {
+            return true;
+        }
+        return false;
+    }
+    isIfElseBB(block) {
+        for (const nextBlock of block.getSuccessors()) {
+            for (const otherBlock of block.getSuccessors()) {
+                if (nextBlock == otherBlock) {
+                    continue;
+                }
+                for (const successor of nextBlock.getSuccessors()) {
+                    if (successor == otherBlock) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+    buildSourceStmt() {
+        let blocks = this.arkBody.getCfg().getBlocks();
+        let visitor = new Set();
+        for (const block of blocks) {
+            if (visitor.has(block)) {
+                continue;
+            }
+            visitor.add(block);
+            this.buildBasicBlock(block, visitor, null);
+        }
+    }
+    buildBasicBlock(block, visitor, parent) {
+        let originalStmts = this.sortStmt(block.getStmts());
+        let stmtReader = new StmtReader(originalStmts);
+        while (stmtReader.hasNext()) {
+            let stmt = stmtReader.next();
+            if (stmt instanceof ArkAssignStmt) {
+                this.stmts.push(new SourceAssignStmt(stmt, stmtReader, this.method));
+            }
+            else if (stmt instanceof ArkIfStmt) {
+                let isLoop = false;
+                if (this.blockTypes.get(block) == BlockType.FOR) {
+                    this.stmts.push(new SourceForStmt(stmt, stmtReader, this.method));
+                    isLoop = true;
+                }
+                else if (this.blockTypes.get(block) == BlockType.WHILE) {
+                    this.stmts.push(new SourceWhileStmt(stmt, stmtReader, this.method));
+                    isLoop = true;
+                }
+                if (isLoop) {
+                    for (const sub of this.loopPath.get(block)) {
+                        if (visitor.has(sub)) {
+                            continue;
+                        }
+                        visitor.add(sub);
+                        this.buildBasicBlock(sub, visitor, parent);
+                    }
+                    this.stmts.push(new SourceCompoundEndStmt('}'));
+                }
+                else {
+                    this.stmts.push(new SourceIfStmt(stmt, stmtReader, this.method));
+                    let successorBlocks = block.getSuccessors();
+                    if (successorBlocks.length >= 2 && this.blockTypes.get(block) == BlockType.IF_ELSE) {
+                        if (!visitor.has(successorBlocks[1])) {
+                            visitor.add(successorBlocks[1]);
+                            this.buildBasicBlock(successorBlocks[1], visitor, stmt);
+                        }
+                    }
+                    if (successorBlocks.length > 0 && !visitor.has(successorBlocks[0])) {
+                        if (!visitor.has(successorBlocks[0])) {
+                            this.stmts.push(new SourceElseStmt(stmt, stmtReader, this.method));
+                            visitor.add(successorBlocks[0]);
+                            this.buildBasicBlock(successorBlocks[0], visitor, stmt);
+                        }
+                    }
+                    this.stmts.push(new SourceCompoundEndStmt('}'));
+                }
+            }
+            else if (stmt instanceof ArkInvokeStmt) {
+                this.stmts.push(new SourceInvokeStmt(stmt, stmtReader, this.method));
+            }
+            else if (stmt instanceof ArkReturnVoidStmt) {
+                this.stmts.push(new SourceReturnVoidStmt(stmt, stmtReader, this.method));
+            }
+            else if (stmt instanceof ArkSwitchStmt) {
+                this.stmts.push(new SourceSwitchStmt(stmt, stmtReader, this.method));
+                let caseIdx = 0;
+                for (const sub of block.getSuccessors()) {
+                    if (!visitor.has(sub)) {
+                        visitor.add(sub);
+                        let caseStmt = new SourceCaseStmt(stmt, stmtReader, this.method, caseIdx);
+                        this.stmts.push(caseStmt);
+                        this.buildBasicBlock(sub, visitor, stmt);
+                        if (caseStmt.isDefault()) {
+                            this.stmts.push(new SourceCompoundEndStmt(''));
+                        }
+                    }
+                    caseIdx++;
+                }
+                this.stmts.push(new SourceCompoundEndStmt('}'));
+            }
+            else if (stmt instanceof ArkGotoStmt) {
+                if (parent instanceof ArkSwitchStmt) {
+                    this.stmts.push(new SourceCompoundEndStmt('    break;'));
+                }
+                else {
+                    if (this.blockTypes.get(block) == BlockType.CONTINUE) {
+                        this.stmts.push(new SourceContinueStmt(stmt, stmtReader, this.method));
+                    }
+                    else {
+                        this.stmts.push(new SourceBreakStmt(stmt, stmtReader, this.method));
+                    }
+                }
+            }
+            else if (stmt instanceof ArkReturnStmt) {
+                this.stmts.push(new SourceReturnStmt(stmt, stmtReader, this.method));
+            }
+            else {
+                this.stmts.push(stmt);
+            }
+        }
+    }
+    printLocals() {
+        for (let local of this.arkBody.getLocals()) {
+            // not define this
+            if (local.getName() == 'this' || local.getName() == 'console') {
+                continue;
+            }
+            if (local.getType() instanceof CallableType) {
+                continue;
+            }
+            if (!local.getDeclaringStmt()) {
+                continue;
+            }
+            // not define parameter
+            if (local.getDeclaringStmt() instanceof ArkAssignStmt) {
+                let assignStmt = local.getDeclaringStmt();
+                if (assignStmt.getRightOp() instanceof ArkParameterRef) {
+                    continue;
+                }
+            }
+            this.printer.writeIndent().writeLine(`let ${local.getName()}: ${SourceUtils.typeToString(local.getType())};`);
+            logger.info('SourceBody->printLocals:', local);
+        }
+    }
+    printStmts() {
+        for (let stmt of this.stmts) {
+            if (stmt instanceof SourceSwitchStmt || stmt instanceof SourceCaseStmt
+                || stmt instanceof SourceIfStmt || stmt instanceof SourceWhileStmt
+                || stmt instanceof SourceForStmt) {
+                this.printer.writeIndent().writeLine(stmt.toString());
+                this.printer.incIndent();
+            }
+            else if (stmt instanceof SourceElseStmt) {
+                this.printer.decIndent();
+                this.printer.writeIndent().writeLine(stmt.toString());
+                this.printer.incIndent();
+            }
+            else if (stmt instanceof SourceCompoundEndStmt) {
+                this.printer.decIndent();
+                this.printer.writeIndent().writeLine(stmt.toString());
+            }
+            else {
+                this.printer.writeIndent().writeLine(stmt.toString());
+            }
+        }
+    }
+    hasDominated(srcBlock, dstBlock) {
+        for (let child of this.dominanceTree.getChildren(srcBlock)) {
+            if (child == dstBlock) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /*
+        temp9 = new <>.<>();                            temp10 = new Array<number>(3);
+        temp10 = new Array<number>(3);                  temp10[0] = "Cat";
+        temp10[0] = "Cat";                        ==>   temp10[1] = "Dog";
+        temp10[1] = "Dog";                              temp10[2] = "Hamster";
+        temp10[2] = "Hamster";                          temp9 = new <>.<>();
+        temp9.constructor(temp10);                      temp9.constructor(temp10);
+    */
+    sortStmt(stmts) {
+        for (let i = stmts.length - 1; i > 0; i--) {
+            if (stmts[i] instanceof ArkInvokeStmt && stmts[i].getInvokeExpr()) {
+                let instanceInvokeExpr = stmts[i].getInvokeExpr();
+                if ('constructor' == instanceInvokeExpr.getMethodSignature().getMethodSubSignature().getMethodName()) {
+                    let localName = instanceInvokeExpr.getBase().getName();
+                    let newExprIdx = findNewExpr(i, localName);
+                    if (newExprIdx >= 0 && newExprIdx < i - 1) {
+                        moveStmt(i, newExprIdx);
+                    }
+                }
+            }
+        }
+        return stmts;
+        function findNewExpr(constructorIdx, name) {
+            for (let j = constructorIdx - 1; j >= 0; j--) {
+                if (stmts[j] instanceof ArkAssignStmt) {
+                    if (stmts[j].getLeftOp() instanceof Local) {
+                        if (stmts[j].getLeftOp().getName() == name) {
+                            return j;
+                        }
+                    }
+                }
+            }
+            return -1;
+        }
+        function moveStmt(constructorIdx, newExprIdx) {
+            let back = stmts[newExprIdx];
+            for (let i = newExprIdx; i < constructorIdx - 1; i++) {
+                stmts[i] = stmts[i + 1];
+            }
+            stmts[constructorIdx - 1] = back;
+        }
+    }
+}
+class StmtReader {
+    constructor(stmts) {
+        this.stmts = [];
+        this.stmts = stmts;
+        this.pos = 0;
+    }
+    hasNext() {
+        return this.pos < this.stmts.length;
+    }
+    next() {
+        if (!this.hasNext()) {
+            throw new Error('No more stmt.');
+        }
+        let stmt = this.stmts[this.pos];
+        this.pos++;
+        return stmt;
+    }
+    rollback() {
+        if (this.pos == 0) {
+            throw new Error('No more stmt to rollback.');
+        }
+        this.pos--;
+    }
+}
+
+class SourceMethod extends SourceBase {
+    constructor(indent, arkFile, method) {
+        super(indent, arkFile);
+        this.method = method;
+    }
+    dump() {
+        if (this.method.isDefaultArkMethod()) {
+            this.printBody(this.method);
+        }
+        else {
+            this.printMethod(this.method);
+        }
+        return this.printer.toString();
+    }
+    dumpOriginalCode() {
+        return this.method.getCode() + '\n';
+    }
+    getLine() {
+        return this.method.getLine();
+    }
+    printMethod(method) {
+        this.printer.writeIndent().write(this.methodProtoToString(method));
+        // abstract function no body
+        if (method.containsModifier('AbstractKeyword')
+            || method.getDeclaringArkClass().getOriginType().toLowerCase() == 'interface') {
+            this.printer.writeLine(';');
+            return;
+        }
+        this.printer.writeLine('{');
+        this.printer.incIndent();
+        this.printBody(method);
+        this.printer.decIndent();
+        this.printer.writeIndent();
+        this.printer.writeLine('}');
+    }
+    printBody(method) {
+        let srcBody = new SourceBody(this.printer.getIndent(), method);
+        this.printer.write(srcBody.dump());
+    }
+    methodProtoToString(method) {
+        var _a;
+        let code = new ArkCodeBuffer();
+        code.writeSpace(this.modifiersToString(method.getModifiers()));
+        if (!method.getName().startsWith('AnonymousFunc$_')) {
+            if ((_a = method.getDeclaringArkClass()) === null || _a === void 0 ? void 0 : _a.isDefaultArkClass()) {
+                code.writeSpace('function');
+            }
+            code.write(this.resolveMethodName(method.getName()));
+        }
+        if (method.getTypeParameter().length > 0) {
+            let typeParameters = [];
+            method.getTypeParameter().forEach((parameter) => {
+                typeParameters.push(SourceUtils.typeToString(parameter));
+            });
+            code.write(`<${SourceUtils.typeArrayToString(method.getTypeParameter())}>`);
+        }
+        let parameters = [];
+        method.getParameters().forEach((parameter) => {
+            let str = parameter.getName();
+            if (parameter.isOptional()) {
+                str += '?';
+            }
+            if (parameter.getType()) {
+                str += ': ' + SourceUtils.typeToString(parameter.getType());
+            }
+            parameters.push(str);
+        });
+        code.write(`(${parameters.join(',')})`);
+        const returnType = method.getReturnType();
+        if (!(returnType instanceof UnknownType)) {
+            code.writeSpace(`: ${SourceUtils.typeToString(returnType)}`);
+        }
+        if (method.getName().startsWith('AnonymousFunc$_')) {
+            code.write(' => ');
+        }
+        return code.toString();
+    }
+}
+
+class SourceClass extends SourceBase {
+    constructor(indent, arkFile, cls) {
+        super(indent, arkFile);
+        this.cls = cls;
+    }
+    getLine() {
+        return this.cls.getLine();
+    }
+    dump() {
+        // print export class name<> + extends c0 implements x1, x2 {
+        this.printer.writeIndent().writeSpace(this.modifiersToString(this.cls.getModifiers()))
+            .write(`${this.cls.getOriginType().toLowerCase()} ${this.cls.getName()}`);
+        if (this.cls.getTypeParameter().length > 0) {
+            this.printer.write(`<${SourceUtils.typeArrayToString(this.cls.getTypeParameter())}>`);
+        }
+        if (this.cls.getSuperClassName()) {
+            this.printer.write(` extends ${this.cls.getSuperClassName()} `);
+        }
+        if (this.cls.getImplementedInterfaceNames().length > 0) {
+            this.printer.write(` implements ${this.cls.getImplementedInterfaceNames().join(',')}`);
+        }
+        this.printer.writeLine('{');
+        this.printer.incIndent();
+        this.printFields();
+        this.printMethods();
+        this.printer.decIndent();
+        this.printer.writeIndent().writeLine('}');
+        return this.printer.toString();
+    }
+    dumpOriginalCode() {
+        return this.cls.getCode() + '\n';
+    }
+    printMethods() {
+        let items = [];
+        for (let method of this.cls.getMethods()) {
+            items.push(new SourceMethod(this.printer.getIndent(), this.arkFile, method));
+        }
+        items.sort((a, b) => a.getLine() - b.getLine());
+        items.forEach((v) => {
+            this.printer.write(v.dump());
+        });
+    }
+    printFields() {
+        for (let field of this.cls.getFields()) {
+            this.printer.writeIndent()
+                .writeSpace(this.modifiersToString(field.getModifiers()))
+                .write(field.getName());
+            if (field.getQuestionToken()) {
+                this.printer.write('?');
+            }
+            // property.getInitializer() PropertyAccessExpression ArrowFunction ClassExpression FirstLiteralToken StringLiteral 
+            // TODO: Initializer not ready
+            if (field.getType()) {
+                this.printer.write(':' + SourceUtils.typeToString(field.getType()));
+            }
+            if (field.getFieldType() == 'EnumMember') {
+                this.printer.writeLine(',');
+            }
+            else {
+                this.printer.writeLine(';');
+            }
+        }
+    }
+}
+
+class SourceExportInfo extends SourceBase {
+    constructor(indent, arkFile, info) {
+        super(indent, arkFile);
+        this.info = info;
+    }
+    getLine() {
+        return -1;
+    }
+    dump() {
+        if (this.info.getExportClauseType() !== 'NamespaceExport' && this.info.getExportClauseType() !== 'NamedExports') {
+            return '';
+        }
+        if (this.info.getExportClauseType() === 'NamespaceExport') {
+            // just like: export * as xx from './yy'
+            if (this.info.getNameBeforeAs()) {
+                this.printer.writeIndent().write(`export ${this.info.getNameBeforeAs()} as ${this.info.getExportClauseName()}`);
+            }
+            else {
+                this.printer.writeIndent().write(`export ${this.info.getExportClauseName()}`);
+            }
+        }
+        else if (this.info.getExportClauseType() === 'NamedExports') {
+            // just like: export {xxx as x} from './yy'
+            if (this.info.getNameBeforeAs()) {
+                this.printer.write(`export {${this.info.getNameBeforeAs()} as ${this.info.getExportClauseName()}}`);
+            }
+            else {
+                this.printer.write(`export {${this.info.getExportClauseName()}}`);
+            }
+        }
+        if (this.info.getExportFrom()) {
+            this.printer.write(` from '${this.info.getExportFrom()}'`);
+        }
+        this.printer.writeLine(';');
+        return this.printer.toString();
+    }
+    dumpOriginalCode() {
+        return this.dump();
+    }
+}
+class SourceImportInfo extends SourceBase {
+    constructor(indent, arkFile, info) {
+        super(indent, arkFile);
+        this.info = info;
+    }
+    getLine() {
+        return -1;
+    }
+    dump() {
+        if (this.info.getImportType() === 'Identifier') {
+            // import fs from 'fs'
+            this.printer.writeIndent().writeLine(`import ${this.info.getImportClauseName()} from '${this.info.getImportFrom()}';`);
+        }
+        else if (this.info.getImportType() === 'NamedImports') {
+            // import {xxx} from './yyy'
+            if (this.info.getNameBeforeAs()) {
+                this.printer.writeIndent().writeLine(`import {${this.info.getNameBeforeAs()} as ${this.info.getImportClauseName()}} from '${this.info.getImportFrom()}';`);
+            }
+            else {
+                this.printer.writeIndent().writeLine(`import {${this.info.getImportClauseName()}} from '${this.info.getImportFrom()}';`);
+            }
+        }
+        else if (this.info.getImportType() === 'NamespaceImport') {
+            // import * as ts from 'typescript'
+            this.printer.writeIndent().writeLine(`import * as ${this.info.getImportClauseName()} from '${this.info.getImportFrom()}';`);
+        }
+        else if (this.info.getImportType() == 'EqualsImport') {
+            // import mmmm = require('./xxx')
+            this.printer.writeIndent().writeLine(`import ${this.info.getImportClauseName()} =  require('${this.info.getImportFrom()}');`);
+        }
+        else {
+            // import '../xxx'
+            this.printer.writeIndent().writeLine(`import '${this.info.getImportFrom()}';`);
+        }
+        return this.printer.toString();
+    }
+    dumpOriginalCode() {
+        return this.dump();
+    }
+}
+
+class SourceNamespace extends SourceBase {
+    constructor(indent, arkFile, ns) {
+        super(indent, arkFile);
+        this.ns = ns;
+    }
+    getLine() {
+        return this.ns.getLine();
+    }
+    dump() {
+        this.printer.writeIndent().writeSpace(this.modifiersToString(this.ns.getModifiers())).writeLine(`namespace ${this.ns.getName()} {`);
+        this.printer.incIndent();
+        let items = [];
+        // print class 
+        for (let cls of this.ns.getClasses()) {
+            if (cls.isDefaultArkClass()) {
+                for (let method of cls.getMethods()) {
+                    if (!method.getName().startsWith('AnonymousFunc$_')) {
+                        items.push(new SourceMethod(this.printer.getIndent(), this.arkFile, method));
+                    }
+                }
+            }
+            else {
+                items.push(new SourceClass(this.printer.getIndent(), this.arkFile, cls));
+            }
+        }
+        // print namespace
+        for (let childNs of this.ns.getNamespaces()) {
+            items.push(new SourceNamespace(this.printer.getIndent(), this.arkFile, childNs));
+        }
+        // print exportInfos
+        for (let exportInfo of this.ns.getExportInfos()) {
+            items.push(new SourceExportInfo(this.printer.getIndent(), this.arkFile, exportInfo));
+        }
+        //TODO: fields /methods
+        //TODO: sort by lineno
+        items.sort((a, b) => a.getLine() - b.getLine());
+        items.forEach((v) => {
+            this.printer.write(v.dump());
+        });
+        this.printer.decIndent();
+        this.printer.writeIndent().writeLine('}');
+        return this.printer.toString();
+    }
+    dumpOriginalCode() {
+        return this.ns.getCode();
+    }
+}
+
+class SourcePrinter extends Printer {
+    constructor() {
+        super(...arguments);
+        this.items = [];
+    }
+    printTo(streamOut) {
+        // print imports
+        for (let info of this.arkFile.getImportInfos()) {
+            this.items.push(new SourceImportInfo('', this.arkFile, info));
+        }
+        // print namespace
+        for (let ns of this.arkFile.getNamespaces()) {
+            this.items.push(new SourceNamespace('', this.arkFile, ns));
+        }
+        // print class 
+        for (let cls of this.arkFile.getClasses()) {
+            if (cls.isDefaultArkClass()) {
+                for (let method of cls.getMethods()) {
+                    if (!method.getName().startsWith('AnonymousFunc$_')) {
+                        this.items.push(new SourceMethod('', this.arkFile, method));
+                    }
+                }
+            }
+            else {
+                this.items.push(new SourceClass('', this.arkFile, cls));
+            }
+        }
+        // print export
+        for (let info of this.arkFile.getExportInfos()) {
+            this.items.push(new SourceExportInfo('', this.arkFile, info));
+        }
+        this.items.sort((a, b) => a.getLine() - b.getLine());
+        this.items.forEach((v) => {
+            streamOut.write(v.dump());
+        });
+    }
+    printOriginalCode(streamOut) {
+        streamOut.write(this.arkFile.getCode());
+    }
+}
+
+class PrinterBuilder {
+    constructor(outputDir = '') {
+        this.outputDir = outputDir;
+    }
+    getOutputDir(arkFile) {
+        if (this.outputDir === '') {
+            return join(arkFile.getProjectDir(), '..', 'output');
+        }
+        else {
+            return join(this.outputDir);
+        }
+    }
+    dumpToDot(arkFile, output = undefined) {
+        let filename = output;
+        if (output === undefined) {
+            filename = join(this.getOutputDir(arkFile), arkFile.getName() + '.dot');
+        }
+        fs__default.mkdirSync(dirname(filename), { recursive: true });
+        let streamOut = new ArkStream(fs__default.createWriteStream(filename));
+        let printer = new DotPrinter(arkFile);
+        printer.printTo(streamOut);
+        streamOut.close();
+    }
+    dumpToTs(arkFile, output = undefined) {
+        let filename = output;
+        if (output === undefined) {
+            filename = join(this.getOutputDir(arkFile), arkFile.getName());
+        }
+        fs__default.mkdirSync(dirname(filename), { recursive: true });
+        let streamOut = new ArkStream(fs__default.createWriteStream(filename));
+        let printer = new SourcePrinter(arkFile);
+        // if arkFile not change printOriginalCode()
+        printer.printTo(streamOut);
+        streamOut.close();
+    }
+}
+
+export { ASTree, AbstractCallGraph, AbstractExpr, AbstractFieldRef, AbstractInvokeExpr, AbstractRef, AliasType, AnnotationNamespaceType, AnnotationType, AnnotationTypeQueryType, AnyType, ArkArrayRef, ArkAssignStmt, ArkBinopExpr, ArkBody, ArkCastExpr, ArkCaughtExceptionRef, ArkClass, ArkCodeBuffer, ArkConditionExpr, ArkDeleteStmt, ArkField, ArkFile, ArkGotoStmt, ArkIfStmt, ArkInstanceFieldRef, ArkInstanceInvokeExpr, ArkInstanceOfExpr, ArkInvokeStmt, ArkLengthExpr, ArkMethod, ArkNamespace, ArkNewArrayExpr, ArkNewExpr, ArkNopStmt, ArkParameterRef, ArkPhiExpr, ArkReturnStmt, ArkReturnVoidStmt, ArkStaticFieldRef, ArkStaticInvokeExpr, ArkStream, ArkSwitchStmt, ArkThisRef, ArkThrowStmt, ArkTypeOfExpr, ArkUnopExpr, ArrayBindingPatternParameter, ArrayLiteralExpr, ArrayObjectType, ArrayType, BUILDIN_CONTAINER_COMPONENT, BasicBlock, BodyBuilder, BooleanType, CallableType, Cfg, CfgBuilder, ClassAliasType, ClassHierarchyAnalysisAlgorithm, ClassInfo, ClassSignature, ClassType, Config, Constant, DataflowProblem, DataflowResult, DataflowSolver, DefUseChain$1 as DefUseChain, DominanceFinder, DominanceTree, DotPrinter, Edge, ExportInfo, ExprUseReplacer, Fact, FieldSignature, FileSignature, IRUtils, ImportInfo, InterfaceSignature, LOG_LEVEL, LineColPosition, LinePosition, LiteralType, Local, MethodInfo, MethodParameter, MethodSignature, MethodSignatureManager, MethodSubSignature, ModelUtils, NamespaceInfo, NamespaceSignature, NeverType, NodeA, NullType, NumberType, ObjectBindingPatternParameter, ObjectLiteralExpr, PathEdge, PathEdgePoint, Position, PrimitiveType, Printer, PrinterBuilder, RapidTypeAnalysisAlgorithm, RefUseReplacer, Scene, SceneConfig, SceneManager, Scope, StaticSingleAssignmentFormer, Stmt, StmtUseReplacer, StringType, TupleType, Type, TypeInference, TypeLiteralType, UnclearReferenceType, UndefinedType, UndefinedVariableChecker, UndefinedVariableSolver, UnionType, UnknownType, ValueTag, ValueUtil, VariablePointerAnalysisAlogorithm, ViewTree, ViewTreeNode, VisibleValue, VoidType, arkMethodNodeKind, buildArkFileFromFile, buildArkMethodFromArkClass, buildArkNamespace, buildClassInfo4ClassNode, buildDefaultArkClassFromArkFile, buildDefaultArkClassFromArkNamespace, buildExportInfo4ExportNode, buildGetAccessor2ArkField, buildHeritageClauses, buildImportInfo4ImportNode, buildIndexSignature2ArkField, buildMethodInfo4MethodNode, buildModifiers, buildNamespaceInfo4NamespaceNode, buildNormalArkClassFromArkFile, buildNormalArkClassFromArkNamespace, buildNormalArkMethodFromAstNode, buildNormalArkMethodFromMethodInfo, buildParameters, buildProperty2ArkField, buildReturnType4Method, buildTypeFromPreStr, buildTypeParameters, classSignatureCompare, extractLastBracketContent, factEqual, fieldSignatureCompare, fileSignatureCompare, genSignature4ImportClause, getAllFiles, handlePropertyAccessExpression, handleQualifiedName, isItemRegistered, methodSignatureCompare, methodSubSignatureCompare, notStmtOrExprKind, printCallGraphDetails, splitStringWithRegex, transfer2UnixPath, updateSdkConfigPrefix };
 //# sourceMappingURL=bundle.js.map

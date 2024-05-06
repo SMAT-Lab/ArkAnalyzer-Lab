@@ -15,7 +15,7 @@ export class Test {
         let scene = this.buildScene();
         scene.inferTypes();
         let staticSingleAssignmentFormer = new StaticSingleAssignmentFormer();
-        for (const arkFile of scene.arkFiles) {
+        for (const arkFile of scene.getFiles()) {
             console.log('=============== arkFile:', arkFile.getName(), ' ================');
             for (const arkClass of arkFile.getClasses()) {
                 for (const arkMethod of arkClass.getMethods()) {
