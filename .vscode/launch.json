@@ -12,8 +12,10 @@
         "name": "Launch Program",
         //作用：调试时加载ts-node包（在调试时直接运行ts代码）
         "runtimeArgs": ["-r","ts-node/register"],
-        //01调试.ts表示要调试的ts文件        
-        "args": ["ex\\ex03\\rule.ts"]
+        //01调试.ts表示要调试的ts文件    
+        "args": ["ex\\ex01\\basicUsage.ts"]
+        //"args": ["ex\\ex01\\cfgDot.ts"] 
+        // "args": ["ex\\ex03\\rule.ts"]
         // "args": ["tests\\resources\\cfg\\main.ts"]
       }
     ]

@@ -1,0 +1,10 @@
+{
+  "targetProjectName": "cfgDot",
+  "targetProjectDirectory": "ex/resources/basicUsage/cfgDot",    
+  
+  "logPath": "out/log.txt",
+  "ohosSdkPath": "",
+  "kitSdkPath": "",
+  "systemSdkPath": "",
+  "otherSdks": []
+}

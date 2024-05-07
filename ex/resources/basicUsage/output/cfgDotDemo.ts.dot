@@ -1,0 +1,117 @@
+digraph "cfgDotDemo.ts" {
+  subgraph "cluster_@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS._DEFAULT_ARK_METHOD()" {
+    label="@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS._DEFAULT_ARK_METHOD()";
+    Node47860 [label="this = this: @cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS
+        staticinvoke <@_UnkownProjectName/_UnkownFileName: .main()>()
+        return"];
+  }
+  subgraph "cluster_Original_@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS._DEFAULT_ARK_METHOD()" {
+    label="@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS._DEFAULT_ARK_METHOD()_original";
+    NodeOriginal47860 [label="main();"];
+  }
+  subgraph "cluster_@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.factorial(number)" {
+    label="@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.factorial(number)";
+    Node49110 [label="n = parameter0: number
+        this = this: @cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS
+        $temp2 = 1
+        if n > $temp2"];
+    Node49111 [label="$temp3 = 1
+        return $temp3"];
+    Node49112 [label="$temp4 = 1
+        $temp5 = n - $temp4
+        $temp6 = staticinvoke <@_UnkownProjectName/_UnkownFileName: .factorial()>($temp5)
+        $temp7 = n * $temp6
+        return $temp7"];
+    Node49110 -> Node49111;
+    Node49110 -> Node49112;
+  }
+  subgraph "cluster_Original_@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.factorial(number)" {
+    label="@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.factorial(number)_original";
+    NodeOriginal49110 [label="if (n <= 1)"];
+    NodeOriginal49111 [label="return 1;"];
+    NodeOriginal49112 [label="return n * factorial(n - 1);"];
+    NodeOriginal49110 -> NodeOriginal49111;
+    NodeOriginal49110 -> NodeOriginal49112;
+  }
+  subgraph "cluster_@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.fizzBuzz(number)" {
+    label="@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.fizzBuzz(number)";
+    Node48400 [label="limit = parameter0: number
+        this = this: @cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS
+        $temp2 = 1
+        i = $temp2
+        if i > limit
+        i = i + 1"];
+    Node48401 [label="$temp3 = 15
+        $temp4 = 0
+        $temp5 = i % $temp3
+        if $temp5 !== $temp4"];
+    Node48402 [label="$temp6 = \"FizzBuzz\"
+        instanceinvoke console.<@_UnkownProjectName/_UnkownFileName: .log()>($temp6)"];
+    Node48403 [label="$temp7 = 3
+        $temp8 = 0
+        $temp9 = i % $temp7
+        if $temp9 !== $temp8"];
+    Node48404 [label="$temp10 = \"Fizz\"
+        instanceinvoke console.<@_UnkownProjectName/_UnkownFileName: .log()>($temp10)"];
+    Node48405 [label="$temp11 = 5
+        $temp12 = 0
+        $temp13 = i % $temp11
+        if $temp13 !== $temp12"];
+    Node48406 [label="$temp14 = \"Buzz\"
+        instanceinvoke console.<@_UnkownProjectName/_UnkownFileName: .log()>($temp14)"];
+    Node48407 [label="instanceinvoke console.<@_UnkownProjectName/_UnkownFileName: .log()>(i)"];
+    Node48408 [label="return"];
+    Node48400 -> Node48401;
+    Node48400 -> Node48408;
+    Node48401 -> Node48402;
+    Node48401 -> Node48403;
+    Node48402 -> Node48400;
+    Node48403 -> Node48404;
+    Node48403 -> Node48405;
+    Node48404 -> Node48400;
+    Node48405 -> Node48406;
+    Node48405 -> Node48407;
+    Node48406 -> Node48400;
+    Node48407 -> Node48400;
+  }
+  subgraph "cluster_Original_@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.fizzBuzz(number)" {
+    label="@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.fizzBuzz(number)_original";
+    NodeOriginal48400 [label="for (let i = 1; i <= limit; i++) "];
+    NodeOriginal48401 [label="if (i % 15 === 0)"];
+    NodeOriginal48402 [label="console.log(\"FizzBuzz\");"];
+    NodeOriginal48403 [label="if (i % 3 === 0)"];
+    NodeOriginal48404 [label="console.log(\"Fizz\");"];
+    NodeOriginal48405 [label="if (i % 5 === 0)"];
+    NodeOriginal48406 [label="console.log(\"Buzz\");"];
+    NodeOriginal48407 [label="console.log(i);"];
+    NodeOriginal48408 [label="return;"];
+    NodeOriginal48400 -> NodeOriginal48401;
+    NodeOriginal48400 -> NodeOriginal48408;
+    NodeOriginal48401 -> NodeOriginal48402;
+    NodeOriginal48401 -> NodeOriginal48403;
+    NodeOriginal48402 -> NodeOriginal48400;
+    NodeOriginal48403 -> NodeOriginal48404;
+    NodeOriginal48403 -> NodeOriginal48405;
+    NodeOriginal48404 -> NodeOriginal48400;
+    NodeOriginal48405 -> NodeOriginal48406;
+    NodeOriginal48405 -> NodeOriginal48407;
+    NodeOriginal48406 -> NodeOriginal48400;
+    NodeOriginal48407 -> NodeOriginal48400;
+  }
+  subgraph "cluster_@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.main()" {
+    label="@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.main()";
+    Node37340 [label="this = this: @cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS
+        $temp1 = \"Factorial of 5:\"
+        $temp2 = 5
+        $temp3 = staticinvoke <@_UnkownProjectName/_UnkownFileName: .factorial()>($temp2)
+        instanceinvoke console.<@_UnkownProjectName/_UnkownFileName: .log()>($temp1, $temp3)
+        $temp4 = 15
+        staticinvoke <@_UnkownProjectName/_UnkownFileName: .fizzBuzz()>($temp4)
+        return"];
+  }
+  subgraph "cluster_Original_@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.main()" {
+    label="@cfgDot/cfgDotDemo: _DEFAULT_ARK_CLASS.main()_original";
+    NodeOriginal37340 [label="console.log(\"Factorial of 5:\", factorial(5));
+        fizzBuzz(15);"];
+  }
+}

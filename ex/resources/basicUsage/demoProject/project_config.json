@@ -1,0 +1,10 @@
+{
+  "targetProjectName": "demoProject",
+  "targetProjectDirectory": "ex/resources/basicUsage/demoProject",    
+  
+  "logPath": "out/log.txt",
+  "ohosSdkPath": "",
+  "kitSdkPath": "",
+  "systemSdkPath": "",
+  "otherSdks": []
+}

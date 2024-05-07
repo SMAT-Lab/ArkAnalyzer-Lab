@@ -1,6 +1,6 @@
-import { SceneConfig, Scene, ArkFile, ArkNamespace, ArkClass, ArkField, ArkMethod, Cfg } from "./bundle";
+import { SceneConfig, Scene, ArkFile, ArkNamespace, ArkClass, ArkField, ArkMethod, Cfg } from "../../src/bundle";
 
-const config_path = "./target_project/project_config.json";
+const config_path = "ex/resources/basicUsage/demoProject/project_config.json";
 let config: SceneConfig = new SceneConfig();
 config.buildFromJson(config_path);
 
@@ -12,7 +12,7 @@ let fileNames: string[] = files.map(file => file.name);
 console.log(fileNames);
 
 //ex01.2：获取命名空间
-let namespaces: ArkNamespace[] = scene.getAllNamespacesUnderTargetProject();
+let namespaces: ArkNamespace[] = scene.getNamespaces();
 let namespaceNames: string[] = namespaces.map(ns => ns.name);
 console.log(namespaceNames);
 
@@ -21,7 +21,7 @@ let namespaceNames2: string[] = namespaces2.map(ns => ns.name);
 console.log(namespaceNames2);
 
 //ex01.3：获取所有类
-let classes: ArkClass[] = scene.getAllClassesUnderTargetProject();
+let classes: ArkClass[] = scene.getClasses();
 let classNames: string[] = classes.map(cls => cls.name);
 console.log(classNames);
 
@@ -45,21 +45,12 @@ let methods: ArkMethod[] = serviceClass.getMethods();
 let methodNames: string[] = methods.map(mthd => mthd.name);
 console.log(methodNames);
 
-let methods1: ArkMethod[] = scene.getAllMethodsUnderTargetProject();
-let methods2: ArkMethod[] = files[2].getAllMethodsUnderThisFile();
-
+let methods1: ArkMethod[] = scene.getMethods();
 let methodNames1: string[] = methods1.map(mthd => mthd.name);
-let methodNames2: string[] = methods2.map(mthd => mthd.name);
-
 console.log(methodNames1);
-console.log(methodNames2);
 
 //ex01.6：获取方法CFG
 let addBookMethod: ArkMethod = methods[0];
 let addBookCfg: Cfg = addBookMethod.getBody().getCfg();
-
-//ex01.7：三地址码打印并观察语法糖变化
-
-
 
 console.log("finish")
