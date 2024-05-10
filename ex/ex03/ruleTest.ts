@@ -5,7 +5,7 @@ import { ArkStaticInvokeExpr } from "../../src/bundle";
 
 export class Test {
     public buildScene(): Scene {
-        const config_path = "ex\\resources\\rule\\rule.json";
+        const config_path = "ex/resources/rule/rule.json";
         let config: SceneConfig = new SceneConfig();
         config.buildFromJson(config_path);
         return new Scene(config);

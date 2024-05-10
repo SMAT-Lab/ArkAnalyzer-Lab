@@ -1,8 +1,8 @@
 {
     "targetProjectName": "ifdsTest",    
-    "targetProjectDirectory": "ex\\resources\\UndefinedVariable",
+    "targetProjectDirectory": "ex/resources/UndefinedVariable",
 
-    "logPath": "out\\log.txt",
+    "logPath": "out/log.txt",
     
     "ohosSdkPath": "",
     "kitSdkPath": "",

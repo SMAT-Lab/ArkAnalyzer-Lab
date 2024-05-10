@@ -3,7 +3,7 @@ import { Scene } from "../../src/bundle";
 import { ModelUtils } from "../../src/bundle";
 import { UndefinedVariableChecker, UndefinedVariableSolver } from "../../src/bundle";
 
-const config_path = "ex\\resources\\UndefinedVariable\\UndefinedVariable.json";
+const config_path = "ex/resources/UndefinedVariable/UndefinedVariable.json";
 let config: SceneConfig = new SceneConfig();
 config.buildFromJson(config_path);
 const scene = new Scene(config);

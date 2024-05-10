@@ -1,8 +1,8 @@
 {
     "targetProjectName": "Test",
-    "targetProjectDirectory": "ex\\resources\\rule",    
+    "targetProjectDirectory": "ex/resources/rule",    
     
-    "logPath": "out\\log.txt",
+    "logPath": "out/log.txt",
     
     "ohosSdkPath": "",
     "kitSdkPath": "",

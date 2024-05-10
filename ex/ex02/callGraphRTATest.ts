@@ -31,6 +31,6 @@ function runScene(config: SceneConfig) {
     let methods = callGraph.getMethods()
     let calls = callGraph.getCalls()
     printCallGraph(methods, calls, config.getTargetProjectDirectory())
-    debugger;
+    
 }
 runScene(config);

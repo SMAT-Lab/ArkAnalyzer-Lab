@@ -5,7 +5,7 @@ import { StaticSingleAssignmentFormer } from "../../src/bundle";
 
 export class Test {
     public buildScene(): Scene {
-        const config_path = "ex\\resources\\ssa\\ssa.json";
+        const config_path = "ex/resources/ssa/ssa.json";
         let config: SceneConfig = new SceneConfig();
         config.buildFromJson(config_path);
         return new Scene(config);
