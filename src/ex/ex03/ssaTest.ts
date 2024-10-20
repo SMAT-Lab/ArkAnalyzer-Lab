@@ -1,14 +1,13 @@
-import { SceneConfig } from "../../src/bundle";
-import { Scene } from "../../src/bundle";
-import { ArkBody } from "../../src/bundle";
-import { StaticSingleAssignmentFormer } from "../../src/bundle";
+import { Scene, SceneConfig, StaticSingleAssignmentFormer, ArkBody } from "arkanalyzer";
 
 export class Test {
     public buildScene(): Scene {
-        const config_path = "ex/resources/ssa/ssa.json";
+        const projectRoot = "ex/resources/ssa";
         let config: SceneConfig = new SceneConfig();
-        config.buildFromJson(config_path);
-        return new Scene(config);
+        config.buildFromProjectDir(projectRoot);
+        let scene = new Scene();
+        scene.buildSceneFromProjectDir(config);
+        return scene;
     }
 
     public test() {
@@ -21,7 +20,7 @@ export class Test {
                 for (const arkMethod of arkClass.getMethods()) {
                     console.log('*** arkMethod: ', arkMethod.getName());
 
-                    const body = arkMethod.getBody();
+                    const body = arkMethod.getBody()!;
                     console.log("*****before ssa")
                     this.printStmts(body);
                     console.log("*****after ssa")

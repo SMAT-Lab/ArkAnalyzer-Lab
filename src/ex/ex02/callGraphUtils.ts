@@ -1,6 +1,6 @@
-import { MethodSignature } from "typescript";
+import { Method } from "arkanalyzer";
 
-export function printCallGraph(methods: Set<MethodSignature>, calls: Map<MethodSignature, MethodSignature[]>, rootDir: string): void {
+export function printCallGraph(methods: Set<Method>, calls: Map<Method, Set<Method>>, rootDir: string): void {
     // 打印 Methods
     console.log("Call Graph:\n")
     console.log('\tMethods:');
@@ -21,9 +21,8 @@ export function printCallGraph(methods: Set<MethodSignature>, calls: Map<MethodS
         const modifiedMethodName = `<${method}`;
         console.log(`\t\t${modifiedMethodName.padEnd(4)}   ${arrow}`);
 
-        for (let i = 0; i < calledMethods.length; i++) {
-            const modifiedCalledMethod = `\t\t<${calledMethods[i]}`;
-            console.log(`\t\t${modifiedCalledMethod}`);
+        for (const modifiedCalledMethod of calledMethods) {
+            console.log(`\t\t\t\t<${modifiedCalledMethod}`);
         }
         console.log("\n")
     });

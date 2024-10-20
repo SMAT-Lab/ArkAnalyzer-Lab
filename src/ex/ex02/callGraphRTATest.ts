@@ -1,10 +1,11 @@
-import { SceneConfig, Scene, MethodSignature, printCallGraphDetails } from "../../src/bundle";
+import { SceneConfig, Scene, MethodSignature, printCallGraphDetails, Method } from "arkanalyzer";
 import { printCallGraph } from "./callGraphUtils";
 
 let config: SceneConfig = new SceneConfig()
-config.buildFromJson("./ex/resources/callgraph/callGraphConfig.json");
+config.buildFromProjectDir("./ex/resources/callGraph");
 function runScene(config: SceneConfig) {
-    let projectScene: Scene = new Scene(config);
+    let projectScene: Scene = new Scene();
+    projectScene.buildSceneFromProjectDir(config);
     let entryPoints: MethodSignature[] = []
 
     // 指定入口点函数
@@ -27,9 +28,13 @@ function runScene(config: SceneConfig) {
 
     // 构建方法调用图
     let callGraph = projectScene.makeCallGraphRTA(entryPoints)
+    callGraph.dump('./out/rta.dot');
 
-    let methods = callGraph.getMethods()
-    let calls = callGraph.getCalls()
+    let methods = new Set<Method>();
+    for (const entry of callGraph.getEntries()) {
+        methods.add(callGraph.getMethodByFuncID(entry)!);
+    }
+    let calls = callGraph.getDynEdges()
     printCallGraph(methods, calls, config.getTargetProjectDirectory())
     
 }

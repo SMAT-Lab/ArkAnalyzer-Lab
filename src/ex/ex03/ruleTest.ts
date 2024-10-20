@@ -1,14 +1,13 @@
-import { SceneConfig } from "../../src/bundle";
-import { Scene } from "../../src/bundle";
-import { ArkStaticInvokeExpr } from "../../src/bundle";
-
+import { SceneConfig, Scene, ArkStaticInvokeExpr } from "arkanalyzer";
 
 export class Test {
     public buildScene(): Scene {
-        const config_path = "ex/resources/rule/rule.json";
+        const projectRoot = "ex/resources/rule";
         let config: SceneConfig = new SceneConfig();
-        config.buildFromJson(config_path);
-        return new Scene(config);
+        config.buildFromProjectDir(projectRoot);
+        let scene = new Scene();
+        scene.buildSceneFromProjectDir(config);
+        return scene;
     }
 
     public test() {
@@ -21,7 +20,7 @@ export class Test {
                     if (arkMethod.getName() == '_DEFAULT_ARK_METHOD') {
                         continue;
                     }
-                    const cfg = arkMethod.getCfg();
+                    const cfg = arkMethod.getCfg()!;
                     for (const stmt of cfg.getStmts()) {
                         if (stmt.getExprs().length > 0) {
                             const expr = stmt.getExprs()[0];
@@ -35,8 +34,6 @@ export class Test {
             }
         }
     }
-
-
 
     public testTypeInference(): void {
         let scene = this.buildScene();

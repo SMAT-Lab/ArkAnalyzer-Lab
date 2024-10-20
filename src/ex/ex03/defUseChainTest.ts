@@ -1,13 +1,13 @@
-import { SceneConfig } from "../../src/bundle";
-import { Scene } from "../../src/bundle";
-
+import { SceneConfig, Scene } from "arkanalyzer";
 
 export class Test {
     public buildScene(): Scene {
-        const config_path = "ex/resources/defUseChain/defUseChain.json";
+        const projectRoot = "ex/resources/defUseChain";
         let config: SceneConfig = new SceneConfig();
-        config.buildFromJson(config_path);
-        return new Scene(config);
+        config.buildFromProjectDir(projectRoot);
+        let scene = new Scene();
+        scene.buildSceneFromProjectDir(config);
+        return scene;
     }
 
     public test() {
@@ -22,7 +22,7 @@ export class Test {
                     }
                     console.log('*** arkMethod: ', arkMethod.getName());
 
-                    const cfg = arkMethod.getBody().getCfg();
+                    const cfg = arkMethod.getBody()!.getCfg();
                     cfg.buildDefUseChain();
                     for (const chain of cfg.getDefUseChains()){
                         console.log("variable: "+chain.value.toString()+", def: "+chain.def.toString()+", use: "+chain.use.toString());
@@ -32,8 +32,6 @@ export class Test {
             }
         }
     }
-
-
 
     public testTypeInference(): void {
         let scene = this.buildScene();
