@@ -1,15 +1,16 @@
-import { SceneConfig, Scene, MethodSignature, printCallGraphDetails } from "../../src/bundle";
+import { SceneConfig, Scene, MethodSignature, printCallGraphDetails } from "arkanalyzer";
 import { printCallGraph } from "./callGraphUtils";
 
 let config: SceneConfig = new SceneConfig()
-config.buildFromJson("./ex/resources/callgraph/callGraphConfig.json");
+config.buildFromProjectDir("./ex/resources/callgraph");
 function runScene(config: SceneConfig) {
-    let projectScene: Scene = new Scene(config);
+    let projectScene: Scene = new Scene();
+    projectScene.buildSceneFromProjectDir(config);
     let entryPoints: MethodSignature[] = []
 
     // 指定入口点函数
     for (let arkFile of projectScene.getFiles()) {
-        if (arkFile.getName() === "main.ts") {
+        if (arkFile.getName() === "main2.ts") {
             for (let arkClass of arkFile.getClasses()) {
                 if (arkClass.getName() === "_DEFAULT_ARK_CLASS") {
                     for (let arkMethod of arkClass.getMethods()) {
