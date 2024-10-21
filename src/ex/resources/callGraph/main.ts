@@ -1,11 +1,17 @@
-abstract class Animal {sound(): void {}}
-class Dog extends Animal{ sound(): void {}}
-class Cat extends Animal{ sound(): void {}}
+abstract class Animal {
+    sound(): void {}
+}
+class Dog extends Animal {
+    sound(): void {}
+}
+class Cat extends Animal {
+    sound(): void {}
+}
 
 function main() {
-    makeSound(new Dog())
+    makeSound(new Dog());
 }
 
 function makeSound(animal: Animal) {
-    animal.sound()
+    animal.sound();
 }

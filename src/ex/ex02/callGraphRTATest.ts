@@ -1,41 +1,40 @@
-import { SceneConfig, Scene, MethodSignature, printCallGraphDetails, Method } from "arkanalyzer";
-import { printCallGraph } from "./callGraphUtils";
+import { SceneConfig, Scene, MethodSignature, printCallGraphDetails, Method } from 'arkanalyzer';
+import { printCallGraph } from './callGraphUtils';
 
-let config: SceneConfig = new SceneConfig()
-config.buildFromProjectDir("./ex/resources/callGraph");
+let config: SceneConfig = new SceneConfig();
+config.buildFromProjectDir('src/ex/resources/callGraph');
 function runScene(config: SceneConfig) {
     let projectScene: Scene = new Scene();
     projectScene.buildSceneFromProjectDir(config);
-    let entryPoints: MethodSignature[] = []
+    let entryPoints: MethodSignature[] = [];
 
     // 指定入口点函数
     for (let arkFile of projectScene.getFiles()) {
-        if (arkFile.getName() === "main.ts") {
+        if (arkFile.getName() === 'main.ts') {
             for (let arkClass of arkFile.getClasses()) {
-                if (arkClass.getName() === "_DEFAULT_ARK_CLASS") {
+                if (arkClass.getName() === '_DEFAULT_ARK_CLASS') {
                     for (let arkMethod of arkClass.getMethods()) {
-                        if (arkMethod.getName() === "main") {
-                            entryPoints.push(arkMethod.getSignature())
+                        if (arkMethod.getName() === 'main') {
+                            entryPoints.push(arkMethod.getSignature());
                         }
                     }
                 }
             }
         }
     }
-    
+
     // 类型推导
-    projectScene.inferTypes()
+    projectScene.inferTypes();
 
     // 构建方法调用图
-    let callGraph = projectScene.makeCallGraphRTA(entryPoints)
-    callGraph.dump('./out/rta.dot');
+    let callGraph = projectScene.makeCallGraphRTA(entryPoints);
+    callGraph.dump('./out/RTA.dot');
 
     let methods = new Set<Method>();
     for (const entry of callGraph.getEntries()) {
         methods.add(callGraph.getMethodByFuncID(entry)!);
     }
-    let calls = callGraph.getDynEdges()
-    printCallGraph(methods, calls, config.getTargetProjectDirectory())
-    
+    let calls = callGraph.getDynEdges();
+    printCallGraph(methods, calls, config.getTargetProjectDirectory());
 }
 runScene(config);

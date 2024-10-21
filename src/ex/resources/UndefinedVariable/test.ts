@@ -1,56 +1,55 @@
-import { im } from "./test2";
-export class property{
-    pp=1;
+import { im } from './test2';
+export class property {
+    pp = 1;
 }
 
-class t{
-    static s:property;
-    p:property;
-    constructor(){
-    }
-    static sm(){
+class t {
+    static s: property;
+    p: property;
+    constructor() {}
+    static sm() {
         // this.s = new property()
-        console.log(this.s.pp)
-        console.log(t.s.pp)
+        console.log(this.s.pp);
+        console.log(t.s.pp);
     }
-    method(){
-        console.log(t.s)
+    method() {
+        console.log(t.s);
     }
-    print(){
-        console.log(this.p.pp)
+    print() {
+        console.log(this.p.pp);
     }
 }
-function U2(){
+function U2() {
     let t1 = new t();
-    // t1.p = new property() 
+    // t1.p = new property()
     t1.print();
 }
 
-function U3(){
+function U3() {
     let t1 = new t();
-    // t1.p = new property() 
-    print(t1)
+    // t1.p = new property()
+    print(t1);
 }
 
-function print(tp:t){
+function print(tp: t) {
     console.log(tp.p.pp);
 }
 
-function U4(){
+function U4() {
     // t.s = new property()
-    console.log(t.s.pp)
+    console.log(t.s.pp);
 }
 
-function U5(){
-    t.sm()
+function U5() {
+    t.sm();
 }
 
 function U6() {
     im();
 }
-function U(){
+function U() {
     let t1: t;
-    if (true){
+    if (true) {
         t1 = new t();
         console.log(t1.p);
     }

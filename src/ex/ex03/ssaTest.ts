@@ -1,8 +1,8 @@
-import { Scene, SceneConfig, StaticSingleAssignmentFormer, ArkBody } from "arkanalyzer";
+import { Scene, SceneConfig, StaticSingleAssignmentFormer, ArkBody } from 'arkanalyzer';
 
 export class Test {
     public buildScene(): Scene {
-        const projectRoot = "ex/resources/ssa";
+        const projectRoot = 'src/ex/resources/ssa';
         let config: SceneConfig = new SceneConfig();
         config.buildFromProjectDir(projectRoot);
         let scene = new Scene();
@@ -21,9 +21,9 @@ export class Test {
                     console.log('*** arkMethod: ', arkMethod.getName());
 
                     const body = arkMethod.getBody()!;
-                    console.log("*****before ssa")
+                    console.log('*****before ssa');
                     this.printStmts(body);
-                    console.log("*****after ssa")
+                    console.log('*****after ssa');
                     staticSingleAssignmentFormer.transformBody(body);
                     this.printStmts(body);
                 }
@@ -38,7 +38,6 @@ export class Test {
             console.log(threeAddresStmt.toString());
         }
     }
-
 }
 
 let t = new Test();

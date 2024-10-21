@@ -1,8 +1,8 @@
-import { SceneConfig, Scene } from "arkanalyzer";
+import { SceneConfig, Scene } from 'arkanalyzer';
 
 export class Test {
     public buildScene(): Scene {
-        const projectRoot = "ex/resources/defUseChain";
+        const projectRoot = 'src/ex/resources/defUseChain';
         let config: SceneConfig = new SceneConfig();
         config.buildFromProjectDir(projectRoot);
         let scene = new Scene();
@@ -24,10 +24,16 @@ export class Test {
 
                     const cfg = arkMethod.getBody()!.getCfg();
                     cfg.buildDefUseChain();
-                    for (const chain of cfg.getDefUseChains()){
-                        console.log("variable: "+chain.value.toString()+", def: "+chain.def.toString()+", use: "+chain.use.toString());
+                    for (const chain of cfg.getDefUseChains()) {
+                        console.log(
+                            'variable: ' +
+                                chain.value.toString() +
+                                ', def: ' +
+                                chain.def.toString() +
+                                ', use: ' +
+                                chain.use.toString()
+                        );
                     }
-                    
                 }
             }
         }

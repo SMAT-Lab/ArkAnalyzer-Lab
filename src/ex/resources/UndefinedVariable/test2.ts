@@ -1,4 +1,4 @@
-import { property } from "./test";
+import { property } from './test';
 class static2 {
     static p: property;
 }

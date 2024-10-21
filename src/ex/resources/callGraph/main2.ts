@@ -1,14 +1,24 @@
-import { Logger } from "./log"
+import { Logger } from './log';
 
-abstract class Animal { sound(): void { } }
-class Dog extends Animal { sound(): void { Logger.warn("dog sound") } }
-class Cat extends Animal { sound(): void { Logger.error("dog sound") } }
+abstract class Animal {
+    sound(): void {}
+}
+class Dog extends Animal {
+    sound(): void {
+        Logger.warn('dog sound');
+    }
+}
+class Cat extends Animal {
+    sound(): void {
+        Logger.error('dog sound');
+    }
+}
 
 function main() {
-    makeSound(new Dog())
-    Logger.info("create new dog")
+    makeSound(new Dog());
+    Logger.info('create new dog');
 }
 
 function makeSound(animal: Animal) {
-    animal.sound()
+    animal.sound();
 }
