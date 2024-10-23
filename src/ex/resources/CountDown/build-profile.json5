@@ -24,19 +24,6 @@
       }
     ],
     "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "C:\\Users\\孙波\\.ohos\\config\\default_CountDown_3GOOG0gFdCssqFEhu-dVCDBnKp7nMLriE1AEDMhiyaU=.cer",
-          "storePassword": "0000001BB69805420FA5C560A40C42C39A735CD33812B24B5BFC387AE2F06B64470989410F58B928910E43",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001B8F7707786343340BE7A4556890DCA8CDBBC5526079E890F0E68976267FB07605C3C5DA6B553C8B",
-          "profile": "C:\\Users\\孙波\\.ohos\\config\\default_CountDown_3GOOG0gFdCssqFEhu-dVCDBnKp7nMLriE1AEDMhiyaU=.p7b",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\孙波\\.ohos\\config\\default_CountDown_3GOOG0gFdCssqFEhu-dVCDBnKp7nMLriE1AEDMhiyaU=.p12"
-        }
-      }
     ]
   },
   "modules": [

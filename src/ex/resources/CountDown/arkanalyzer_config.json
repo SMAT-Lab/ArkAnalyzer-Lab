@@ -1,0 +1,10 @@
+{
+    "targetProjectName": "CountDown",
+    "targetProjectDirectory": "src/ex/resources/CountDown",
+
+    "logPath": "ArkAnalyzer.log",
+    "logLevel": "INFO",
+    
+    "sdks": [
+    ]
+}
