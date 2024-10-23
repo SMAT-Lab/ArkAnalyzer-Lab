@@ -20,18 +20,13 @@ export class Test {
                     if (arkMethod.getName() == '_DEFAULT_ARK_METHOD') {
                         continue;
                     }
-                    console.log('*** arkMethod: ', arkMethod.getName());
+                    console.log(`*** arkMethod: ${arkMethod.getName()}`);
 
                     const cfg = arkMethod.getBody()!.getCfg();
                     cfg.buildDefUseChain();
                     for (const chain of cfg.getDefUseChains()) {
                         console.log(
-                            'variable: ' +
-                                chain.value.toString() +
-                                ', def: ' +
-                                chain.def.toString() +
-                                ', use: ' +
-                                chain.use.toString()
+                            `variable: ${chain.value.toString()}, def: ${chain.def.toString()}, use: ${chain.use.toString()}`
                         );
                     }
                 }

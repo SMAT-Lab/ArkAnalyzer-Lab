@@ -34,14 +34,14 @@ let classes3: ArkClass[] = namespaces[0].getClasses();
 let classNames3: string[] = classes3.map((cls) => cls.getName());
 console.log(classNames3);
 
-//ex01.4：获取所有属性
-let bookClass: ArkClass = classes[3];
+//ex01.4：获取Book所有属性
+let bookClass: ArkClass = classes.filter((value) => value.getName() == 'Book')[0];
 let fields: ArkField[] = bookClass.getFields();
 let fieldNames: string[] = fields.map((fld) => fld.getName());
 console.log(fieldNames);
 
-//ex01.5：获取所有方法
-let serviceClass: ArkClass = classes[5];
+//ex01.5：获取BookService所有方法
+let serviceClass: ArkClass = classes.filter((value) => value.getName() === 'BookService')[0];
 let methods: ArkMethod[] = serviceClass.getMethods();
 let methodNames: string[] = methods.map((mthd) => mthd.getName());
 console.log(methodNames);

@@ -1,0 +1,56 @@
+/*
+ * Copyright (c) 2023 Huawei Device Co., Ltd.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+{
+  "app": {
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "runtimeOS": "HarmonyOS"
+      }
+    ],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\孙波\\.ohos\\config\\default_CountDown_3GOOG0gFdCssqFEhu-dVCDBnKp7nMLriE1AEDMhiyaU=.cer",
+          "storePassword": "0000001BB69805420FA5C560A40C42C39A735CD33812B24B5BFC387AE2F06B64470989410F58B928910E43",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B8F7707786343340BE7A4556890DCA8CDBBC5526079E890F0E68976267FB07605C3C5DA6B553C8B",
+          "profile": "C:\\Users\\孙波\\.ohos\\config\\default_CountDown_3GOOG0gFdCssqFEhu-dVCDBnKp7nMLriE1AEDMhiyaU=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\孙波\\.ohos\\config\\default_CountDown_3GOOG0gFdCssqFEhu-dVCDBnKp7nMLriE1AEDMhiyaU=.p12"
+        }
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}
