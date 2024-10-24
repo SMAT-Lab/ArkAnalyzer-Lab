@@ -13,7 +13,8 @@ export class BookService {
 
     public getBooksByAuthor(author: string): Library.Book[] {
         let ans: Library.Book[] = [];
-        for (const book of this.books) {
+        for (let i = 0; i < this.books.length; i++) {
+            let book = this.books[i];
             if (book.author === author) {
                 ans.push(book);
             }

@@ -1,4 +1,4 @@
-import { SceneConfig, Scene, ArkFile, ArkNamespace, ArkClass, ArkField, ArkMethod, Cfg } from 'arkanalyzer';
+import { SceneConfig, Scene, ArkFile, ArkNamespace, ArkClass, ArkField, ArkMethod, Cfg, DotMethodPrinter, PrinterBuilder } from 'arkanalyzer';
 
 const projectRoot = 'src/ex/resources/basicUsage/demoProject';
 let config: SceneConfig = new SceneConfig();
@@ -6,6 +6,7 @@ config.buildFromProjectDir(projectRoot);
 
 let scene: Scene = new Scene();
 scene.buildSceneFromProjectDir(config);
+scene.inferTypes();
 
 //ex01.1：获取所有文件
 let files: ArkFile[] = scene.getFiles();
@@ -40,7 +41,7 @@ let fields: ArkField[] = bookClass.getFields();
 let fieldNames: string[] = fields.map((fld) => fld.getName());
 console.log(fieldNames);
 
-//ex01.5：获取BookService所有方法
+//ex01.5：获取BookService方法
 let serviceClass: ArkClass = classes.filter((value) => value.getName() === 'BookService')[0];
 let methods: ArkMethod[] = serviceClass.getMethods();
 let methodNames: string[] = methods.map((mthd) => mthd.getName());
@@ -50,8 +51,10 @@ let methods1: ArkMethod[] = scene.getMethods();
 let methodNames1: string[] = methods1.map((mthd) => mthd.getName());
 console.log(methodNames1);
 
-//ex01.6：获取方法CFG
-let addBookMethod: ArkMethod = methods[0];
-let addBookCfg: Cfg | undefined = addBookMethod?.getBody()?.getCfg();
+//ex01.6：获取方法getBooksByAuthor的CFG
+let method = serviceClass.getMethodWithName('getBooksByAuthor');
+let cfg: Cfg | undefined = method?.getBody()?.getCfg();
+let dotMethodPrinter = new DotMethodPrinter(method!);
+PrinterBuilder.dump(dotMethodPrinter, 'out/getBooksByAuthor_cfg.dot');
 
 console.log('finish');
