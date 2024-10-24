@@ -10,4 +10,14 @@ export class BookService {
     public getAllBooks(): Library.Book[] {
         return this.books;
     }
+
+    public getBooksByAuthor(author: string): Library.Book[] {
+        let ans: Library.Book[] = [];
+        for (const book of this.books) {
+            if (book.author === author) {
+                ans.push(book);
+            }
+        }
+        return ans;
+    }
 }
