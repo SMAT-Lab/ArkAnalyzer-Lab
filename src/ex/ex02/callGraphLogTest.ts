@@ -2,7 +2,7 @@ import { SceneConfig, Scene, MethodSignature, Method } from 'arkanalyzer';
 import { printCallGraph } from './callGraphUtils';
 
 let config: SceneConfig = new SceneConfig();
-config.buildFromProjectDir('src/ex/resources/callGraph');
+config.buildFromProjectDir('src/ex/resources/callGraph2');
 function runScene(config: SceneConfig) {
     let scene: Scene = new Scene();
     scene.buildSceneFromProjectDir(config);

@@ -1,7 +1,7 @@
 import { Logger } from './log';
 
 abstract class Animal {
-    sound(): void {}
+    abstract sound(): void;
 }
 class Dog extends Animal {
     sound(): void {

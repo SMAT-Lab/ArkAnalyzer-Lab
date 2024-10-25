@@ -1,5 +1,5 @@
 abstract class Animal {
-    sound(): void {}
+    abstract sound(): void;
 }
 class Dog extends Animal {
     sound(): void {}
@@ -7,11 +7,14 @@ class Dog extends Animal {
 class Cat extends Animal {
     sound(): void {}
 }
-
-function main() {
-    makeSound(new Dog());
+class Pig extends Animal {
+    sound(): void {}
 }
-
 function makeSound(animal: Animal) {
     animal.sound();
+}
+
+function main() {
+    let cat = new Cat();
+    makeSound(new Dog());
 }

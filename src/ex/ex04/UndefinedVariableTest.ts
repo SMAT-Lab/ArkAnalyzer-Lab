@@ -6,8 +6,7 @@ config.buildFromProjectDir(projectRoot);
 let scene = new Scene();
 scene.buildSceneFromProjectDir(config);
 
-const defaultMethod = scene.getFiles()[0].getDefaultClass().getDefaultArkMethod();
-const method = ModelUtils.getMethodWithName('U2', defaultMethod!);
+const method = scene.getMethods().filter((v) => v.getName() === 'U2')[0];
 if (method) {
     const problem = new UndefinedVariableChecker(
         [...method.getCfg()!.getBlocks()][0].getStmts()[method.getParameters().length],
