@@ -14,21 +14,13 @@ export class Test {
         let scene = this.buildScene();
         scene.inferTypes();
         let staticSingleAssignmentFormer = new StaticSingleAssignmentFormer();
-        for (const arkFile of scene.getFiles()) {
-            console.log(`=============== arkFile: ${arkFile.getName()} ================`);
-            for (const arkClass of arkFile.getClasses()) {
-                for (const arkMethod of arkClass.getMethods()) {
-                    console.log(`*** arkMethod: ${arkMethod.getName()}`);
-
-                    const body = arkMethod.getBody()!;
-                    console.log('*****before ssa');
-                    this.printStmts(body);
-                    console.log('*****after ssa');
-                    staticSingleAssignmentFormer.transformBody(body);
-                    this.printStmts(body);
-                }
-            }
-        }
+        let method = scene.getMethods().filter((v) => v.getName() === 'ssa')[0];
+        const body = method.getBody()!;
+        console.log('*****before ssa');
+        this.printStmts(body);
+        console.log('*****after ssa');
+        staticSingleAssignmentFormer.transformBody(body);
+        this.printStmts(body);
     }
 
     public printStmts(body: ArkBody): void {
