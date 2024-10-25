@@ -13,13 +13,14 @@ export class Test {
     public test() {
         let scene = this.buildScene();
         scene.inferTypes();
-        let staticSingleAssignmentFormer = new StaticSingleAssignmentFormer();
+        
         let method = scene.getMethods().filter((v) => v.getName() === 'ssa')[0];
         const body = method.getBody()!;
         console.log('*****before ssa');
         this.printStmts(body);
         console.log('*****after ssa');
-        staticSingleAssignmentFormer.transformBody(body);
+        let ssaFormer = new StaticSingleAssignmentFormer();
+        ssaFormer.transformBody(body);
         this.printStmts(body);
     }
 
