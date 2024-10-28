@@ -1,0 +1,32 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "button_bg",
+      "value": "#0D9FFB"
+    },
+    {
+      "name": "divider_bg",
+      "value": "#f1f3f5"
+    },
+    {
+      "name": "text_bg",
+      "value": "#000000"
+    },
+    {
+      "name": "text_select",
+      "value": "#0A1EFF"
+    },
+    {
+      "name": "text_normal",
+      "value": "#182431"
+    },
+    {
+      "name": "btn_bg",
+      "value": "#d3d4d6"
+    }
+  ]
+}

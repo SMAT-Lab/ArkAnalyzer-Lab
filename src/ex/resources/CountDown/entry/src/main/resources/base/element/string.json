@@ -1,0 +1,48 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "CountDown"
+    },
+    {
+      "name": "entry_desc",
+      "value": "description"
+    },
+    {
+      "name": "MainAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "MainAbility_label",
+      "value": "CountDown"
+    },
+    {
+      "name": "entry_MainAbility",
+      "value": "CountDown"
+    },
+    {
+      "name": "description_mainability",
+      "value": "eTS_Empty Ability"
+    },
+    {
+      "name": "hour",
+      "value": "hour"
+    },
+    {
+      "name": "minute",
+      "value": "minute"
+    },
+    {
+      "name": "seconds",
+      "value": "seconds"
+    }
+  ]
+}

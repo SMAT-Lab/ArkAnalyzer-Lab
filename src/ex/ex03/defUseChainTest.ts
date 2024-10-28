@@ -1,8 +1,8 @@
-import { SceneConfig, Scene } from "arkanalyzer";
+import { SceneConfig, Scene } from 'arkanalyzer';
 
 export class Test {
     public buildScene(): Scene {
-        const projectRoot = "ex/resources/defUseChain";
+        const projectRoot = 'src/ex/resources/defUseChain';
         let config: SceneConfig = new SceneConfig();
         config.buildFromProjectDir(projectRoot);
         let scene = new Scene();
@@ -14,22 +14,14 @@ export class Test {
         let scene = this.buildScene();
         scene.inferTypes();
 
-        for (const arkFile of scene.getFiles()) {
-            for (const arkClass of arkFile.getClasses()) {
-                for (const arkMethod of arkClass.getMethods()) {
-                    if (arkMethod.getName() == '_DEFAULT_ARK_METHOD') {
-                        continue;
-                    }
-                    console.log('*** arkMethod: ', arkMethod.getName());
+        let method = scene.getMethods().filter((v) => v.getName() === 'defUseChain')[0];
 
-                    const cfg = arkMethod.getBody()!.getCfg();
-                    cfg.buildDefUseChain();
-                    for (const chain of cfg.getDefUseChains()){
-                        console.log("variable: "+chain.value.toString()+", def: "+chain.def.toString()+", use: "+chain.use.toString());
-                    }
-                    
-                }
-            }
+        const cfg = method.getBody()!.getCfg();
+        cfg.buildDefUseChain();
+        for (const chain of cfg.getDefUseChains()) {
+            console.log(
+                `variable: ${chain.value.toString()}, def: ${chain.def.toString()}, use: ${chain.use.toString()}`
+            );
         }
     }
 

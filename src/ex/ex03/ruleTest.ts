@@ -1,8 +1,8 @@
-import { SceneConfig, Scene, ArkStaticInvokeExpr } from "arkanalyzer";
+import { SceneConfig, Scene, ArkStaticInvokeExpr } from 'arkanalyzer';
 
 export class Test {
     public buildScene(): Scene {
-        const projectRoot = "ex/resources/rule";
+        const projectRoot = 'src/ex/resources/rule';
         let config: SceneConfig = new SceneConfig();
         config.buildFromProjectDir(projectRoot);
         let scene = new Scene();
@@ -24,7 +24,10 @@ export class Test {
                     for (const stmt of cfg.getStmts()) {
                         if (stmt.getExprs().length > 0) {
                             const expr = stmt.getExprs()[0];
-                            if (expr instanceof ArkStaticInvokeExpr && expr.getMethodSignature().getMethodSubSignature().getMethodName() == "exec") {
+                            if (
+                                expr instanceof ArkStaticInvokeExpr &&
+                                expr.getMethodSignature().getMethodSubSignature().getMethodName() == 'exec'
+                            ) {
                                 const args = expr.getArgs();
                                 console.log(args);
                             }

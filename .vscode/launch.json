@@ -1,18 +1,14 @@
 {
-    // 使用 IntelliSense 了解相关属性。 
-    // 悬停以查看现有属性的描述。
-    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-      {
-        "type": "node",
-        "request": "launch",
-        "name": "Launch Program",
-        //作用：调试时加载ts-node包（在调试时直接运行ts代码）
-        "runtimeArgs": ["-r","ts-node/register"],
-        //01调试.ts表示要调试的ts文件    
-         "args": ["${file}"]
-      }
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Launch Program",
+            //作用：调试时加载ts-node包（在调试时直接运行ts代码）
+            "runtimeArgs": ["-r", "ts-node/register"],
+            // 调试当前选择的文件
+            "args": ["${file}"]
+        }
     ]
-  }
-  
+}
